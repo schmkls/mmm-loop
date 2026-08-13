@@ -2,7 +2,8 @@
 
 An autonomous, sprint-based agent loop for Claude Code. Point it at a project
 with a written vision, run it, and it plans a sprint, specs it, breaks it into
-tickets, implements and reviews each ticket, writes an HTML report with a
+tickets, implements and reviews each ticket, UX-tests what the sprint built
+(fixing what's worth fixing in the same sprint), writes an HTML report with a
 quiz, and updates its own picture of where the project stands — then halts so
 a human can look before the next run.
 
@@ -74,9 +75,15 @@ sprints remaining.
    (`feat(sNN/TTT): ...`), self-report test results, then review exactly that
    ticket's diff. A review may create at most one fix ticket
    (`NNN.1-slug.json`), which runs next.
-6. **Report** — create/extend `docs/sprint_reports.html`: per-sprint summary,
-   diagram, key decisions, blocked-ticket banner, and a click-to-reveal quiz.
-7. **Vision status** — rewrite `.working/vision_status.md` to match reality.
+6. **UX test** (step 5.5) — once all tickets are closed: plan an agentic
+   user-experience test of the sprint's delta (existing tools only), execute
+   it, and turn findings worth fixing into `NNN-ux-slug.json` tickets that
+   run through the normal implement + review loop — in the same sprint. One
+   pass per sprint, no re-test after the fixes.
+7. **Report** — create/extend `docs/sprint_reports.html`: per-sprint summary,
+   diagram, key decisions, blocked-ticket banner, un-ticketized UX findings,
+   and a click-to-reveal quiz.
+8. **Vision status** — rewrite `.working/vision_status.md` to match reality.
 
 ### Exit codes
 
@@ -100,10 +107,13 @@ docs/
     01-mvp/
       sprint_focus.md
       spec.md
+      ux_test_plan.md                # step 5.5's plan
+      ux_findings.md                 # step 5.5's findings (stamped when ticketized)
       tickets/
         001-first-thing.json
         001.1-fix-first-thing.json   # review-created fix ticket
         002-second-thing.json
+        003-ux-fix-help.json         # UX-finding ticket
 ```
 
 Ticket filenames are execution order; a fix ticket `NNN.1` sorts directly
@@ -149,14 +159,14 @@ All knobs live in the copy inside your project:
   passed to `claude`. The default is `--dangerously-skip-permissions` —
   that's what autonomous means; swap in `--permission-mode acceptEdits` and
   an allowlist if that's too spicy for a project.
-- **`scripts/mmm-loop/prompts/*.md`** — the seven step prompts. Editing them
+- **`scripts/mmm-loop/prompts/*.md`** — the ten step prompts. Editing them
   per project is normal and expected.
 
 ## Developing mmm-loop itself
 
 ```bash
 bun install
-bun test        # 80+ tests: unit + per-step + e2e dry runs with a fake `claude`
+bun test        # 100+ tests: unit + per-step + e2e dry runs with a fake `claude`
 bunx tsc --noEmit
 ```
 

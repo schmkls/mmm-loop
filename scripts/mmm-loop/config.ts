@@ -10,6 +10,9 @@ export type StepId =
   | "04-tickets"
   | "05-implement"
   | "05-review"
+  | "05.5-ux-plan"
+  | "05.5-ux-test"
+  | "05.5-ux-tickets"
   | "06-report"
   | "07-vision-status";
 
@@ -32,6 +35,9 @@ export const STEP_CONFIG: Record<StepId, StepConfig> = {
   "04-tickets": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
   "05-implement": { model: "claude-fable-5", effort: "extra", maxTurns: 150 },
   "05-review": { model: "claude-fable-5", effort: "extra", maxTurns: 75 },
+  "05.5-ux-plan": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
+  "05.5-ux-test": { model: "claude-fable-5", effort: "extra", maxTurns: 100 },
+  "05.5-ux-tickets": { model: "claude-fable-5", effort: "default", maxTurns: 30 },
   "06-report": { model: "claude-fable-5", effort: "default", maxTurns: 75 },
   "07-vision-status": { model: "claude-haiku-4-5", effort: "default", maxTurns: 30 },
 };

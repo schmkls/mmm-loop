@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "
 import { join } from "node:path";
 import { runAgentStep } from "./agent.ts";
 import { gitCommitPaths, gitDiffOfCommits, gitHead, gitNewCommits, gitSummaries } from "./git.ts";
+import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "./phases.ts";
 import { readSprint, readTicketFile, sprintsDir, SPRINT_DIRNAME_RE, type SprintSnapshot } from "./snapshot.ts";
 import {
   isFixTicketId,
@@ -339,6 +340,139 @@ export async function stepReview(
     `chore(loop): sprint ${sprint.number} ticket ${ticket.id} reviewed`,
     [".working"],
   );
+}
+
+// ---------------------------------------------------------------- step 5.5.1
+
+export async function stepUxPlan(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
+  const relPlanPath = join(relSprintDir(sprint), "ux_test_plan.md");
+  const planPath = join(ctx.root, relPlanPath);
+
+  // Fresh read: tickets (and their commits) may postdate the snapshot.
+  const current = readSprint(ctx.root, sprint.dirName);
+  const shas = (current.tickets ?? []).flatMap(({ ticket }) => ticket.commits);
+  const commitSummaries = await gitSummaries(ctx.root, shas);
+
+  await runAgentStep({
+    stepId: "05.5-ux-plan",
+    cwd: ctx.root,
+    bundleDir: ctx.bundleDir,
+    vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number, commitSummaries },
+    check: () =>
+      existsSync(planPath) && statSync(planPath).size > 0
+        ? null
+        : `expected a non-empty ux_test_plan.md at ${relPlanPath}`,
+  });
+  await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux plan`, [relPlanPath]);
+}
+
+// ---------------------------------------------------------------- step 5.5.2
+
+export async function stepUxTest(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
+  const relFindingsPath = join(relSprintDir(sprint), "ux_findings.md");
+  const findingsPath = join(ctx.root, relFindingsPath);
+
+  await runAgentStep({
+    stepId: "05.5-ux-test",
+    cwd: ctx.root,
+    bundleDir: ctx.bundleDir,
+    vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
+    check: () => {
+      if (!existsSync(findingsPath)) return `expected ${relFindingsPath} to exist`;
+      const firstLine = (readFileSync(findingsPath, "utf8").split("\n")[0] ?? "").trim();
+      if (firstLine !== UX_TICKETIZED_NO)
+        return `expected the first line of ${relFindingsPath} to be exactly "${UX_TICKETIZED_NO}", got "${firstLine}"`;
+      return null;
+    },
+  });
+  // File-scoped pathspec: scratch/run artifacts the test agent left behind
+  // must never end up in this commit.
+  await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux findings`, [
+    relFindingsPath,
+    join(".working", "learnings.md"),
+  ]);
+}
+
+// ---------------------------------------------------------------- step 5.5.3
+
+/** UX ticket filenames created by step 5.5.3 (spec §8.5.3). */
+const UX_TICKET_FILENAME_RE = /^(\d{3})-ux-[a-z0-9-]+\.json$/;
+
+export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
+  const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
+  const relFindingsPath = join(relSprintDir(sprint), "ux_findings.md");
+  const findingsPath = join(ctx.root, relFindingsPath);
+
+  const beforeFiles = new Map<string, string>(
+    listDir(ticketsDir).map((f) => [f, readFileSync(join(ticketsDir, f), "utf8")]),
+  );
+  // Numbering continues after the highest existing NNN; fix tickets count
+  // via their integer part (after 003 and 003.1, the next is 004).
+  const maxExisting = Math.max(
+    0,
+    ...[...beforeFiles.keys()]
+      .map((f) => TICKET_FILENAME_RE.exec(f)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .map((id) => Number(id.split(".")[0])),
+  );
+  const nextTicketNumber = String(maxExisting + 1).padStart(3, "0");
+
+  await runAgentStep({
+    stepId: "05.5-ux-tickets",
+    cwd: ctx.root,
+    bundleDir: ctx.bundleDir,
+    vars: {
+      sprintDir: relSprintDir(sprint),
+      sprintNumber: sprint.number,
+      findings: readFileSync(findingsPath, "utf8"),
+      nextTicketNumber,
+    },
+    check: () => {
+      const created = listDir(ticketsDir).filter((f) => !beforeFiles.has(f));
+      const errors: string[] = [];
+      const numbers: number[] = [];
+      for (const filename of created) {
+        const m = UX_TICKET_FILENAME_RE.exec(filename);
+        if (!m) {
+          errors.push(
+            `${filename}: filename must match NNN-ux-kebab-slug.json (e.g. ${nextTicketNumber}-ux-fix-help.json)`,
+          );
+          continue;
+        }
+        numbers.push(Number(m[1]));
+        const { ticket, error } = checkTicketFile(join(ticketsDir, filename), filename);
+        if (error) errors.push(error);
+        else errors.push(...initialValueErrors(ticket!, filename));
+      }
+      numbers.sort((a, b) => a - b);
+      numbers.forEach((n, i) => {
+        if (n !== maxExisting + 1 + i)
+          errors.push(
+            `UX ticket numbers must continue contiguously from ${nextTicketNumber}; found ${String(n).padStart(3, "0")} at position ${i + 1}`,
+          );
+      });
+      for (const [filename, contentBefore] of beforeFiles) {
+        const path = join(ticketsDir, filename);
+        if (!existsSync(path)) {
+          errors.push(`${filename} was deleted; ticketizing must not delete tickets`);
+        } else if (readFileSync(path, "utf8") !== contentBefore) {
+          errors.push(`${filename} was modified; ticketizing must not modify existing tickets`);
+        }
+      }
+      return errors.length > 0 ? errors.join("\n") : null;
+    },
+  });
+
+  // Orchestrator-owned: flip the findings stamp (spec §8.5.3) and commit it
+  // together with the new tickets.
+  const lines = readFileSync(findingsPath, "utf8").split("\n");
+  lines[0] = UX_TICKETIZED_YES;
+  writeFileSync(findingsPath, lines.join("\n"));
+  await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux tickets`, [
+    join(relSprintDir(sprint), "tickets"),
+    relFindingsPath,
+    join(".working", "learnings.md"),
+  ]);
 }
 
 // ---------------------------------------------------------------- step 6

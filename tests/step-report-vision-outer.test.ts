@@ -126,7 +126,13 @@ describe("step 7 — vision status", () => {
 describe("outer loop stop conditions", () => {
   test("blocked ticket → exit 2, but report + vision status were still produced", () => {
     const p = makeProject();
-    const r = runLoop(p, ["run"], { SCENARIO_TICKETS_COUNT: "1", SCENARIO_IMPLEMENT: "blocked" });
+    // UX scenarios pinned quiet — this test is about blocking, not the UX pass.
+    const r = runLoop(p, ["run"], {
+      SCENARIO_TICKETS_COUNT: "1",
+      SCENARIO_IMPLEMENT: "blocked",
+      SCENARIO_UX_TEST: "none",
+      SCENARIO_UX_TICKETS: "zero",
+    });
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("human intervention");
     expect(readFileSync(reportPath(p), "utf8")).toContain('<section id="sprint-01">');

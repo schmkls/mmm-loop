@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { derivePhase } from "../scripts/mmm-loop/lib/phases.ts";
+import { derivePhase, UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/lib/phases.ts";
 import {
   readSnapshot,
   type ProjectSnapshot,
@@ -21,8 +21,20 @@ function tf(filename: string, overrides: Partial<Ticket> = {}): TicketFile {
 }
 
 function sprint(dirName: string, o: Partial<SprintSnapshot> = {}): SprintSnapshot {
-  return { dirName, number: dirName.slice(0, 2), hasFocus: true, hasSpec: true, tickets: null, ...o };
+  return {
+    dirName,
+    number: dirName.slice(0, 2),
+    hasFocus: true,
+    hasSpec: true,
+    hasUxPlan: false,
+    uxFindingsFirstLine: null,
+    tickets: null,
+    ...o,
+  };
 }
+
+/** Spread into a sprint to mark its UX pass (step 5.5) complete. */
+const uxDone = { hasUxPlan: true, uxFindingsFirstLine: UX_TICKETIZED_YES };
 
 function snap(
   sprints: SprintSnapshot[],
@@ -107,13 +119,16 @@ describe("derivePhase — spec §6.1 table", () => {
     expect(derivePhase(snap([s]))).toMatchObject({ step: "implement", ticketFilename: "002-b.json" });
   });
 
-  test("all tickets closed, no report section → step 6", () => {
-    const s = sprint("01-mvp", { tickets: [tf("001-a.json", { done: true, reviewed: true })] });
+  test("all tickets closed + UX pass done, no report section → step 6", () => {
+    const s = sprint("01-mvp", {
+      tickets: [tf("001-a.json", { done: true, reviewed: true })],
+      ...uxDone,
+    });
     expect(derivePhase(snap([s], { report: null })).step).toBe("report");
     expect(derivePhase(snap([s], { report: "<html></html>" })).step).toBe("report");
   });
 
-  test("all-blocked tickets count as closed → step 6", () => {
+  test("all-blocked tickets count as closed → step 6 (after the UX pass)", () => {
     const s = sprint("01-mvp", {
       tickets: [
         tf("001-a.json", {
@@ -121,6 +136,7 @@ describe("derivePhase — spec §6.1 table", () => {
           needs_human_intervention_reason: "stuck",
         }),
       ],
+      ...uxDone,
     });
     expect(derivePhase(snap([s])).step).toBe("report");
   });
@@ -149,6 +165,110 @@ describe("derivePhase — spec §6.1 table", () => {
       sprintNumber: "02",
       reuseDirName: "02-next",
     });
+  });
+});
+
+describe("derivePhase — step 5.5 UX rows (spec §8.5.3)", () => {
+  const closedTickets = [tf("001-a.json", { done: true, reviewed: true })];
+
+  test("all closed, no plan → 5.5.1; plan but no findings → 5.5.2; findings 'no' → 5.5.3", () => {
+    const noPlan = sprint("01-mvp", { tickets: closedTickets });
+    expect(derivePhase(snap([noPlan]))).toMatchObject({ step: "ux-plan" });
+
+    const noFindings = sprint("01-mvp", { tickets: closedTickets, hasUxPlan: true });
+    expect(derivePhase(snap([noFindings]))).toMatchObject({ step: "ux-test" });
+
+    const unticketized = sprint("01-mvp", {
+      tickets: closedTickets,
+      hasUxPlan: true,
+      uxFindingsFirstLine: UX_TICKETIZED_NO,
+    });
+    expect(derivePhase(snap([unticketized]))).toMatchObject({ step: "ux-tickets" });
+  });
+
+  test("open UX ticket takes precedence over every UX row → implement", () => {
+    const s = sprint("01-mvp", {
+      tickets: [...closedTickets, tf("004-ux-x.json")],
+      ...uxDone,
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({
+      step: "implement",
+      ticketFilename: "004-ux-x.json",
+    });
+  });
+
+  test("open UX fix ticket (004.1) takes precedence → implement", () => {
+    const s = sprint("01-mvp", {
+      tickets: [
+        ...closedTickets,
+        tf("004-ux-x.json", { done: true, reviewed: true }),
+        tf("004.1-fix-x.json"),
+      ],
+      ...uxDone,
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({
+      step: "implement",
+      ticketFilename: "004.1-fix-x.json",
+    });
+  });
+
+  test("done-but-unreviewed UX ticket takes precedence → review", () => {
+    const s = sprint("01-mvp", {
+      tickets: [...closedTickets, tf("004-ux-x.json", { done: true })],
+      ...uxDone,
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({
+      step: "review",
+      ticketFilename: "004-ux-x.json",
+    });
+  });
+
+  test("never re-enters 5.5: findings 'yes' + report + current stamp → new sprint", () => {
+    const s = sprint("01-mvp", { tickets: closedTickets, ...uxDone });
+    const phase = derivePhase(
+      snap([s], { report: '<section id="sprint-01">…</section>', visionLine: "_Last updated: sprint 01_" }),
+    );
+    expect(phase).toEqual({ step: "sprint-focus", sprintNumber: "02", reuseDirName: null });
+  });
+
+  test("pre-feature complete sprint (report + stamp, no UX files) → new sprint", () => {
+    const s = sprint("01-mvp", { tickets: closedTickets });
+    const phase = derivePhase(
+      snap([s], { report: '<section id="sprint-01">…</section>', visionLine: "_Last updated: sprint 01_" }),
+    );
+    expect(phase).toEqual({ step: "sprint-focus", sprintNumber: "02", reuseDirName: null });
+  });
+
+  test("pre-feature crashed sprint (report, stale stamp, no UX files) → vision-status, not 5.5", () => {
+    const s = sprint("01-mvp", { tickets: closedTickets });
+    const phase = derivePhase(
+      snap([s], { report: '<section id="sprint-01">…</section>', visionLine: "_Last updated: sprint 00_" }),
+    );
+    expect(phase.step).toBe("vision-status");
+  });
+
+  test("malformed findings stamp → LoopError", () => {
+    for (const firstLine of ["_Ticketized: No_", "_ticketized: no_", ""]) {
+      const s = sprint("01-mvp", {
+        tickets: closedTickets,
+        hasUxPlan: true,
+        uxFindingsFirstLine: firstLine,
+      });
+      expect(() => derivePhase(snap([s]))).toThrow(LoopError);
+      expect(() => derivePhase(snap([s]))).toThrow(/malformed first line/);
+    }
+  });
+
+  test("blocked-only sprint with no UX files still gets its UX pass → 5.5.1 (R3 quirk)", () => {
+    const s = sprint("01-mvp", {
+      tickets: [
+        tf("001-a.json", {
+          needs_human_intervention: true,
+          needs_human_intervention_reason: "stuck",
+        }),
+      ],
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({ step: "ux-plan" });
   });
 });
 

@@ -15,6 +15,9 @@ import {
   stepSpec,
   stepSprintFocus,
   stepTickets,
+  stepUxPlan,
+  stepUxTest,
+  stepUxTickets,
   stepVisionStatus,
   type Ctx,
 } from "./steps.ts";
@@ -80,6 +83,18 @@ export async function run(ctx: Ctx, maxSprints: number): Promise<void> {
         workedOnSprint = phase.sprint.dirName;
         await stepReview(ctx, phase.sprint, phase.ticketFilename);
         break;
+      case "ux-plan":
+        workedOnSprint = phase.sprint.dirName;
+        await stepUxPlan(ctx, phase.sprint);
+        break;
+      case "ux-test":
+        workedOnSprint = phase.sprint.dirName;
+        await stepUxTest(ctx, phase.sprint);
+        break;
+      case "ux-tickets":
+        workedOnSprint = phase.sprint.dirName;
+        await stepUxTickets(ctx, phase.sprint);
+        break;
       case "report":
         workedOnSprint = phase.sprint.dirName;
         await stepReport(ctx, phase.sprint);
@@ -106,6 +121,12 @@ function describe(phase: ReturnType<typeof derivePhase>): string {
       return `step 5.1 — implement ${phase.ticketFilename} (sprint ${phase.sprint.number})`;
     case "review":
       return `step 5.2 — review ${phase.ticketFilename} (sprint ${phase.sprint.number})`;
+    case "ux-plan":
+      return `step 5.5.1 — ux plan (sprint ${phase.sprint.number})`;
+    case "ux-test":
+      return `step 5.5.2 — ux test (sprint ${phase.sprint.number})`;
+    case "ux-tickets":
+      return `step 5.5.3 — ux ticketize (sprint ${phase.sprint.number})`;
     case "report":
       return `step 6 — report (sprint ${phase.sprint.number})`;
     case "vision-status":

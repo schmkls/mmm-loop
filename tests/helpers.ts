@@ -3,6 +3,7 @@
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/lib/phases.ts";
 import { init } from "../scripts/mmm-loop/lib/scaffold.ts";
 import type { Ticket } from "../scripts/mmm-loop/lib/tickets.ts";
 
@@ -122,6 +123,10 @@ export interface SprintFiles {
   spec?: boolean;
   /** filename → ticket. Omit for no tickets/ dir; {} for an empty one. */
   tickets?: Record<string, Ticket>;
+  /** UX-pass state: plan writes ux_test_plan.md; findings "no"/"yes" map to
+   * the stamp constants (any other string is written verbatim as the first
+   * line, for malformed-stamp tests). */
+  ux?: { plan?: boolean; findings?: "no" | "yes" | string };
 }
 
 /** Write a sprint folder directly (bypassing agents) and commit it. */
@@ -140,6 +145,20 @@ export function makeSprint(p: TestProject, files: SprintFiles = {}): string {
     for (const [filename, ticket] of Object.entries(files.tickets)) {
       writeTicketFile(p, dirName, filename, ticket);
     }
+  }
+  if (files.ux?.plan) {
+    writeFileSync(
+      join(dir, "ux_test_plan.md"),
+      "# UX test plan — sprint 01\n\n## User-facing delta\n\nThe toy (seeded).\n\n## Tests\n\n### T1 — toy feature output\n- Method: run the toy with existing tools\n\n## Not testable / out of scope\n\nNothing.\n",
+    );
+  }
+  if (files.ux?.findings !== undefined) {
+    const stamps: Record<string, string> = { no: UX_TICKETIZED_NO, yes: UX_TICKETIZED_YES };
+    const firstLine = stamps[files.ux.findings] ?? files.ux.findings;
+    writeFileSync(
+      join(dir, "ux_findings.md"),
+      `${firstLine}\n\n# UX findings — sprint 01\n\n## Summary\n\nOne finding (seeded).\n\n## Tested\n\nT1 (seeded).\n\n## Findings\n\n### F1 — Toy output confusing (severity: medium)\n- Where: the toy feature's output\n- Expected: clear output\n- Actual: confusing output\n- Repro: run the toy feature\n\n## Not testable\n\nNothing.\n`,
+    );
   }
   sh(p.root, "git", "add", "-A");
   sh(p.root, "git", "commit", "-q", "-m", `test: seed sprint ${dirName}`);

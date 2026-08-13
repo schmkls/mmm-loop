@@ -3,6 +3,7 @@
  * next phase. No state file exists anywhere — this is the crash-safety core.
  */
 
+import { LoopError } from "./errors.ts";
 import type { ProjectSnapshot, SprintSnapshot } from "./snapshot.ts";
 import { isClosed, isOpen, needsReview } from "./tickets.ts";
 
@@ -15,6 +16,9 @@ export type Phase =
   | { step: "tickets"; sprint: SprintSnapshot }
   | { step: "implement"; sprint: SprintSnapshot; ticketFilename: string }
   | { step: "review"; sprint: SprintSnapshot; ticketFilename: string }
+  | { step: "ux-plan"; sprint: SprintSnapshot }
+  | { step: "ux-test"; sprint: SprintSnapshot }
+  | { step: "ux-tickets"; sprint: SprintSnapshot }
   | { step: "report"; sprint: SprintSnapshot }
   | { step: "vision-status"; sprint: SprintSnapshot };
 
@@ -25,6 +29,10 @@ export function reportSectionMarker(sprintNumber: string): string {
 export function visionStatusStamp(sprintNumber: string): string {
   return `_Last updated: sprint ${sprintNumber}_`;
 }
+
+/** First line of ux_findings.md before/after the orchestrator's flip (§8.5.3). */
+export const UX_TICKETIZED_NO = "_Ticketized: no_";
+export const UX_TICKETIZED_YES = "_Ticketized: yes_";
 
 export function nextSprintNumber(snapshot: ProjectSnapshot): string {
   return String(snapshot.sprints.length + 1).padStart(2, "0");
@@ -65,7 +73,28 @@ export function derivePhase(snapshot: ProjectSnapshot): Phase {
   if (!latest.tickets.every(({ ticket }) => isClosed(ticket))) {
     throw new Error("unreachable: non-closed ticket survived the walk");
   }
+
+  // Step 5.5 (UX pass) sits between the implement loop and the report. Its
+  // rows apply only while the sprint's report section is missing — so a
+  // pre-feature sprint (report already present, no UX files) skips them and
+  // still counts as complete, and once findings are stamped "yes" no row can
+  // return a ux-* step again (the single-pass bound).
   if (!snapshot.reportHtml?.includes(reportSectionMarker(latest.number))) {
+    if (!latest.hasUxPlan) {
+      return { step: "ux-plan", sprint: latest };
+    }
+    if (latest.uxFindingsFirstLine === null) {
+      return { step: "ux-test", sprint: latest };
+    }
+    if (latest.uxFindingsFirstLine === UX_TICKETIZED_NO) {
+      return { step: "ux-tickets", sprint: latest };
+    }
+    if (latest.uxFindingsFirstLine !== UX_TICKETIZED_YES) {
+      throw new LoopError(
+        `ux_findings.md in ${latest.dirName} has a malformed first line: expected exactly ` +
+          `"${UX_TICKETIZED_NO}" or "${UX_TICKETIZED_YES}", got "${latest.uxFindingsFirstLine}"`,
+      );
+    }
     return { step: "report", sprint: latest };
   }
   if (snapshot.visionStatusFirstLine !== visionStatusStamp(latest.number)) {

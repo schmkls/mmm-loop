@@ -220,7 +220,8 @@ describe("step 5.2 — review", () => {
   test("crash simulation: done+unreviewed on disk → resume runs review, not implement", () => {
     const p = makeProject();
     seedImplemented(p);
-    const r = runLoop(p);
+    // UX scenarios pinned quiet so no UX ticket triggers a step 5.1 of its own.
+    const r = runLoop(p, ["run"], { SCENARIO_UX_TEST: "none", SCENARIO_UX_TICKETS: "zero" });
     expect(r.stdout).toContain("phase: step 5.2 — review 001-a.json");
     expect(r.stdout).not.toContain("phase: step 5.1");
     expect(r.exitCode).toBe(0);

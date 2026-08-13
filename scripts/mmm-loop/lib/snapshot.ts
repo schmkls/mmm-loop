@@ -18,6 +18,10 @@ export interface SprintSnapshot {
   number: string; // e.g. "01"
   hasFocus: boolean;
   hasSpec: boolean;
+  /** Non-empty ux_test_plan.md exists in the sprint folder. */
+  hasUxPlan: boolean;
+  /** First line of ux_findings.md (trimmed), or null if the file is absent. */
+  uxFindingsFirstLine: string | null;
   /** null = no tickets/ dir; sorted by filename (= execution order). */
   tickets: TicketFile[] | null;
 }
@@ -66,11 +70,16 @@ export function readSprint(root: string, dirName: string): SprintSnapshot {
         ticket: readTicketFile(join(ticketsDir, filename), filename),
       }));
   }
+  const findingsPath = join(dir, "ux_findings.md");
   return {
     dirName,
     number: SPRINT_DIRNAME_RE.exec(dirName)![1]!,
     hasFocus: nonEmptyFile(join(dir, "sprint_focus.md")),
     hasSpec: nonEmptyFile(join(dir, "spec.md")),
+    hasUxPlan: nonEmptyFile(join(dir, "ux_test_plan.md")),
+    uxFindingsFirstLine: existsSync(findingsPath)
+      ? (readFileSync(findingsPath, "utf8").split("\n")[0] ?? "").trim()
+      : null,
     tickets,
   };
 }

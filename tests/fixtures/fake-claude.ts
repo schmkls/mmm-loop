@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const prompt = await Bun.stdin.text();
-const stepId = /<!-- mmm-loop:step:([a-z0-9-]+) -->/.exec(prompt)?.[1] ?? "unknown";
+const stepId = /<!-- mmm-loop:step:([a-z0-9.-]+) -->/.exec(prompt)?.[1] ?? "unknown";
 
 const logDir = process.env.FAKE_CLAUDE_LOG;
 if (logDir) {

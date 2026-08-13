@@ -1,4 +1,5 @@
-// Canned step-5.1 agent. SCENARIO_IMPLEMENT: happy (default) | blocked | nothing | multi
+// Canned step-5.1 agent. SCENARIO_IMPLEMENT:
+//   happy (default) | blocked | blocked-ux (block only -ux- tickets) | nothing | multi
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,7 +10,7 @@ if (mode === "nothing") process.exit(0);
 const ticketPath = /Ticket file: `([^`]+)`/.exec(prompt)![1]!;
 const ticket = JSON.parse(fs.readFileSync(ticketPath, "utf8"));
 
-if (mode === "blocked") {
+if (mode === "blocked" || (mode === "blocked-ux" && ticketPath.includes("-ux-"))) {
   ticket.needs_human_intervention = true;
   ticket.needs_human_intervention_reason = "Need a human decision (canned scenario).";
   fs.writeFileSync(ticketPath, JSON.stringify(ticket, null, 2) + "\n");

@@ -42,6 +42,8 @@ Rules:
 - Keep the file under ~120 lines.
 - Only claim something "works" if the sprint's tickets verified it
   (`tests[].passes: true`); everything else is a gap.
+- Unresolved UX findings (not ticketized, or ticketized but blocked) belong
+  under "Known gaps".
 - "Blocked on human" lists tickets with `needs_human_intervention: true` and
   their reasons — or "Nothing.".
 

@@ -8,6 +8,7 @@ contains exactly one up-to-date section for sprint {{sprintNumber}}.
 ## Inputs
 
 - `{{sprintDir}}/` — sprint_focus.md, spec.md, tickets/
+- `{{sprintDir}}/ux_findings.md` — the sprint's UX findings, if present
 - `.working/learnings.md`
 - The existing `{{reportPath}}`, if present
 - The sprint's commits:
@@ -35,7 +36,9 @@ contains exactly one up-to-date section for sprint {{sprintNumber}}.
   2. Key decisions taken, least obvious first.
   3. This sprint's blocked tickets (if any), visually prioritized so a human
      cannot miss them.
-  4. A multiple-choice quiz (3–5 questions) about the design, architecture,
+  4. UX findings that were not ticketized, so unfixed experience problems are
+     visible to a human. No such findings → no subsection.
+  5. A multiple-choice quiz (3–5 questions) about the design, architecture,
      and how the new code works — inline JS, click-to-reveal answers, results
      not persisted anywhere.
 - While ANY ticket is blocked (see list above): a prominent banner at the top
