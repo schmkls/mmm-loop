@@ -248,6 +248,21 @@ appending a description of what was expected but not found to the prompt. If
 it fails again, exit 1 with a clear message. Never more than one retry —
 repeated failure means the prompt or state is wrong, and a human should look.
 
+**Exception — rate/usage limits.** A `claude` run that exits non-zero with a
+usage/rate-limit message (detected by `lib/ratelimit.ts`, the only place
+allowed to pattern-match `claude` output) is a pause, not a failure: the
+spawn wrapper logs one line (how long it will wait and the wall-clock resume
+time), sleeps until the reset time parsed from the message plus a margin
+(a default wait when no reset time is parseable, always capped by
+`maxSingleWaitMs`), and re-runs the **same attempt**. A rate-limited attempt
+does not consume the retry — the retry counter only advances on a run that
+actually completed (exit 0 → postcondition checked). A zero exit is never
+classified, however limit-like its output looks. After `maxConsecutiveWaits`
+consecutive rate-limited attempts of one step, exit 1 naming the step and
+the count. Killing the process mid-wait is safe as always: no waiting state
+is persisted; a rerun derives the same step. Knobs: `RATE_LIMIT` in
+`config.ts` (§7).
+
 ### 6.4 Git conventions
 
 - Work happens directly on the current branch. No sprint branches, no PRs.
@@ -306,6 +321,27 @@ Planning, implementation, and review get the strongest model at the highest
 reasoning effort; simple mechanical steps may use Haiku. The exact CLI
 flag/setting for effort depends on the installed Claude Code version — the
 spawn wrapper owns that translation. All values are per-project editable.
+
+Rate/usage-limit handling (§6.3) is configured by one grouped constant in
+`config.ts`:
+
+```ts
+export const RATE_LIMIT = {
+  /** Wait when the error carries no parseable reset time. */
+  defaultWaitMs: 30 * 60 * 1000,
+  /** Safety margin added on top of a parsed reset time. */
+  resetMarginMs: 60 * 1000,
+  /** Sanity cap for one wait. */
+  maxSingleWaitMs: 12 * 60 * 60 * 1000,
+  /** Consecutive rate-limited attempts of one step before giving up. */
+  maxConsecutiveWaits: 24,
+};
+```
+
+The env vars `MMM_LOOP_RL_DEFAULT_WAIT_MS` and `MMM_LOOP_RL_RESET_MARGIN_MS`
+override the two wait values, and `MMM_LOOP_RL_MAX_WAITS` overrides
+`maxConsecutiveWaits` (env wins; same idiom as `MMM_LOOP_CLAUDE_BIN`) — for
+tests and one-off runs.
 
 ## 8. The steps
 

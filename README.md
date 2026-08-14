@@ -266,6 +266,16 @@ phase purely from what's on disk: which sprint folders exist, each ticket's
 exactly where the files say it left off. This is also why `.working/` must
 stay tracked in git.
 
+Usage limits are waited out, not fatal: when a `claude` run dies because the
+account hit its usage/rate limit, the loop parses the reset time out of the
+message when it carries one, prints a single line saying how long it will
+wait and when it resumes, sleeps, and re-runs the same attempt — without
+consuming the postcondition retry. Killing the process during the wait loses
+nothing (rerun and it derives the same step). The knobs live in the
+`RATE_LIMIT` constant in `scripts/mmm-loop/config.ts`; the env vars
+`MMM_LOOP_RL_DEFAULT_WAIT_MS` and `MMM_LOOP_RL_RESET_MARGIN_MS` override the
+waits for one-off runs.
+
 ## Tuning
 
 All knobs live in the copy inside your project:
