@@ -58,3 +58,23 @@ export const CLEANUP_CADENCE = 3;
  * "--allowedTools", "..."].
  */
 export const PERMISSION_ARGS: string[] = ["--dangerously-skip-permissions"];
+
+/**
+ * Rate/usage-limit handling (spec §6.3): when a `claude` run exits non-zero
+ * because the account hit its usage window, the loop waits out the limit and
+ * re-runs the same attempt instead of failing the step. The env vars
+ * MMM_LOOP_RL_DEFAULT_WAIT_MS and MMM_LOOP_RL_RESET_MARGIN_MS override the
+ * two wait values (env wins — same idiom as MMM_LOOP_CLAUDE_BIN; used by
+ * tests and one-off runs), and MMM_LOOP_RL_MAX_WAITS overrides
+ * maxConsecutiveWaits.
+ */
+export const RATE_LIMIT = {
+  /** Wait when the error carries no parseable reset time. */
+  defaultWaitMs: 30 * 60 * 1000,
+  /** Safety margin added on top of a parsed reset time. */
+  resetMarginMs: 60 * 1000,
+  /** Sanity cap for one wait. */
+  maxSingleWaitMs: 12 * 60 * 60 * 1000,
+  /** Consecutive rate-limited attempts of one step before giving up. */
+  maxConsecutiveWaits: 24,
+};
