@@ -9,6 +9,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PERMISSION_ARGS, STEP_CONFIG, type Effort, type StepId } from "../config.ts";
+import { colorEnabled, formatStepBanner, formatStepDone, style } from "./console.ts";
 import { LoopError } from "./errors.ts";
 import { computeWaitMs, detectRateLimit, effectiveRateLimitConfig } from "./ratelimit.ts";
 import { fillTemplate } from "./template.ts";
@@ -29,6 +30,12 @@ function effortArgs(effort: Effort): string[] {
 
 export interface AgentStep {
   stepId: StepId;
+  /**
+   * The describe() phase text for the step banner (grep contract: it appears
+   * verbatim after "phase: "). Optional so direct/unit callers need not
+   * invent one; the banner falls back to the step id.
+   */
+  description?: string;
   vars: Record<string, string>;
   /** Postcondition: null = success, otherwise what was expected but missing. */
   check: () => string | null | Promise<string | null>;
@@ -158,19 +165,40 @@ async function spawnWithRateLimitWaits(step: AgentStep, prompt: string): Promise
 export async function runAgentStep(step: AgentStep): Promise<void> {
   const template = readFileSync(join(step.bundleDir, "prompts", `${step.stepId}.md`), "utf8");
   const prompt = fillTemplate(template, step.vars);
-
-  let failure = (await spawnWithRateLimitWaits(step, prompt)) ?? (await step.check());
-  if (failure === null) return;
-
-  console.error(`[mmm-loop] step ${step.stepId} failed postcondition, retrying once: ${failure}`);
-  const retryPrompt =
-    prompt +
-    `\n\n## PREVIOUS ATTEMPT FAILED\n\nA previous run of this step did not produce the expected output:\n\n${failure}\n\nCorrect this now. Produce exactly the expected output described above.`;
-  failure = (await spawnWithRateLimitWaits(step, retryPrompt)) ?? (await step.check());
-  if (failure !== null) {
-    throw new LoopError(
-      `Step ${step.stepId} failed its postcondition twice. Last failure:\n${failure}\n` +
-        `A human should look at the prompt (scripts/mmm-loop/prompts/${step.stepId}.md) or the project state.`,
+  const description = step.description ?? `step ${step.stepId}`;
+  const banner = (attempt: 1 | 2) =>
+    console.log(
+      formatStepBanner({
+        stepId: step.stepId,
+        description,
+        config: STEP_CONFIG[step.stepId],
+        attempt,
+        color: colorEnabled,
+      }),
     );
+  const startedAt = Date.now();
+
+  banner(1);
+  let failure = (await spawnWithRateLimitWaits(step, prompt)) ?? (await step.check());
+  if (failure !== null) {
+    console.error(
+      style(
+        "yellow",
+        `[mmm-loop] step ${step.stepId} failed postcondition, retrying once: ${failure}`,
+        colorEnabled,
+      ),
+    );
+    const retryPrompt =
+      prompt +
+      `\n\n## PREVIOUS ATTEMPT FAILED\n\nA previous run of this step did not produce the expected output:\n\n${failure}\n\nCorrect this now. Produce exactly the expected output described above.`;
+    banner(2);
+    failure = (await spawnWithRateLimitWaits(step, retryPrompt)) ?? (await step.check());
+    if (failure !== null) {
+      throw new LoopError(
+        `Step ${step.stepId} failed its postcondition twice. Last failure:\n${failure}\n` +
+          `A human should look at the prompt (scripts/mmm-loop/prompts/${step.stepId}.md) or the project state.`,
+      );
+    }
   }
+  console.log(formatStepDone(description, Date.now() - startedAt, colorEnabled));
 }

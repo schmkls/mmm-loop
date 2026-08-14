@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_CADENCE } from "../config.ts";
 import { isCadenceCleanup } from "./cleanup.ts";
+import { colorEnabled, style } from "./console.ts";
 import { BlockedError, LoopError } from "./errors.ts";
 import { derivePhase } from "./phases.ts";
 import { missingRequiredFiles } from "./scaffold.ts";
@@ -70,7 +71,11 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
         completedThisRun += 1;
         workedOnSprint = null;
         console.log(
-          `[mmm-loop] sprint ${latest.number} complete (${completedThisRun}/${maxSprints} this run)`,
+          style(
+            "green",
+            `[mmm-loop] 🎉 sprint ${latest.number} complete (${completedThisRun}/${maxSprints} this run)`,
+            colorEnabled,
+          ),
         );
       }
       if (completedThisRun >= maxSprints) {
@@ -91,60 +96,68 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
         mkdirSync(join(sprintsDir(ctx.root), `${phase.sprintNumber}-cleanup`), {
           recursive: true,
         });
-        console.log(`[mmm-loop] sprint ${phase.sprintNumber} will be a cleanup sprint`);
+        console.log(
+          style(
+            "cyan",
+            `[mmm-loop] 🧹 sprint ${phase.sprintNumber} will be a cleanup sprint`,
+            colorEnabled,
+          ),
+        );
         continue; // re-derive: lands on cleanup-identify
       }
     }
 
-    console.log(`[mmm-loop] phase: ${describe(phase)}`);
+    // The spawn wrapper prints the step banner (and its `phase: <describe>`
+    // grep-contract line) — it alone knows about the §6.3 retry reprint.
+    const sctx: Ctx = { ...ctx, phaseDescription: describe(phase) };
     switch (phase.step) {
       case "sprint-focus":
         workedOnSprint = phase.reuseDirName;
-        await stepSprintFocus(ctx, phase.sprintNumber, phase.reuseDirName);
+        await stepSprintFocus(sctx, phase.sprintNumber, phase.reuseDirName);
         break;
       case "spec":
         workedOnSprint = phase.sprint.dirName;
-        await stepSpec(ctx, phase.sprint);
+        await stepSpec(sctx, phase.sprint);
         break;
       case "tickets":
         workedOnSprint = phase.sprint.dirName;
-        await stepTickets(ctx, phase.sprint);
+        await stepTickets(sctx, phase.sprint);
         break;
       case "cleanup-identify":
         workedOnSprint = phase.sprint.dirName;
-        await stepCleanupIdentify(ctx, phase.sprint);
+        await stepCleanupIdentify(sctx, phase.sprint);
         break;
       case "cleanup-tickets":
         workedOnSprint = phase.sprint.dirName;
-        await stepCleanupTickets(ctx, phase.sprint, phase.category);
+        await stepCleanupTickets(sctx, phase.sprint, phase.category);
         break;
       case "implement":
         workedOnSprint = phase.sprint.dirName;
-        await stepImplement(ctx, phase.sprint, phase.ticketFilename);
+        await stepImplement(sctx, phase.sprint, phase.ticketFilename);
         break;
       case "review":
         workedOnSprint = phase.sprint.dirName;
-        await stepReview(ctx, phase.sprint, phase.ticketFilename);
+        await stepReview(sctx, phase.sprint, phase.ticketFilename);
         break;
       case "ux-plan":
         workedOnSprint = phase.sprint.dirName;
-        await stepUxPlan(ctx, phase.sprint);
+        await stepUxPlan(sctx, phase.sprint);
         break;
       case "ux-test":
         workedOnSprint = phase.sprint.dirName;
-        await stepUxTest(ctx, phase.sprint);
+        await stepUxTest(sctx, phase.sprint);
         break;
       case "ux-tickets":
         workedOnSprint = phase.sprint.dirName;
-        await stepUxTickets(ctx, phase.sprint);
+        await stepUxTickets(sctx, phase.sprint);
         break;
       case "report":
         workedOnSprint = phase.sprint.dirName;
-        await stepReport(ctx, phase.sprint);
+        await stepReport(sctx, phase.sprint);
         break;
       case "vision-status":
         workedOnSprint = phase.sprint.dirName;
-        await stepVisionStatus(ctx, phase.sprint);
+        await stepVisionStatus(sctx, phase.sprint);
         break;
     }
   }

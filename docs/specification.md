@@ -343,6 +343,27 @@ override the two wait values, and `MMM_LOOP_RL_MAX_WAITS` overrides
 `maxConsecutiveWaits` (env wins; same idiom as `MMM_LOOP_CLAUDE_BIN`) — for
 tests and one-off runs.
 
+### Console output
+
+Watching the loop is the product's demo, so the orchestrator's own lines
+between agent runs are made legible — strictly cosmetically: prompts, agent
+behavior, and timing are untouched. Before each spawn a step banner replaces
+the bare phase line: a fixed per-step emoji (typed `Record<StepId, string>`)
+plus the phase description verbatim (`🔨 phase: step 5.1 — …`), a dim
+metadata line with the step's model/effort/max-turns, and the prompt template
+path to open when a step misbehaves; the §6.3 retry reprints the banner with
+an `attempt 2/2` marker. After each successful agent step one outcome line
+reports wall-clock duration (`✓ step 5.1 done (4m 12s)`); sprint completion
+(🎉), cleanup-sprint notices (🧹), blocked exits (⛔), and the final `done.`
+(✅) keep their text and gain an emoji. Colors come from a tiny in-repo ANSI
+helper (`lib/console.ts`, zero dependencies) and — together with the `──`
+banner rules — degrade to plain text when stdout is not a TTY or `NO_COLOR`
+is set (checked once), so piped/CI output and the grep contracts
+(`[mmm-loop]` prefix on single-line status messages, `phase: <description>`
+in every banner) stay stable. The agents' own stdout/stderr is passed
+through byte-for-byte (teed live, per §2.1) — no prefixing, recoloring,
+buffering, or spinners.
+
 ## 8. The steps
 
 ### 8.1 Step 1 — Validate (programmatic, no agent)

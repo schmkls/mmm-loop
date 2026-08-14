@@ -45,6 +45,11 @@ import {
 export interface Ctx {
   root: string;
   bundleDir: string;
+  /**
+   * The describe() text of the phase about to run — the outer loop fills it
+   * in for the step banner. Optional so tests can call steps directly.
+   */
+  phaseDescription?: string;
 }
 
 const REPORT_REL = join("docs", "sprint_reports.html");
@@ -76,6 +81,7 @@ export async function stepSprintFocus(
 
   await runAgentStep({
     stepId: "02-sprint-focus",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintNumber, folderInstruction },
@@ -101,6 +107,7 @@ export async function stepSpec(ctx: Ctx, sprint: SprintSnapshot): Promise<void> 
   const specPath = join(sprintsDir(ctx.root), sprint.dirName, "spec.md");
   await runAgentStep({
     stepId: "03-spec",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
@@ -116,6 +123,7 @@ export async function stepTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<voi
   const relTicketsDir = join(relSprintDir(sprint), "tickets");
   await runAgentStep({
     stepId: "04-tickets",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
@@ -130,6 +138,7 @@ export async function stepCleanupIdentify(ctx: Ctx, sprint: SprintSnapshot): Pro
   const specPath = join(sprintsDir(ctx.root), sprint.dirName, "spec.md");
   await runAgentStep({
     stepId: "03-cleanup-identify",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
@@ -154,6 +163,7 @@ export async function stepCleanupTickets(
 
   await runAgentStep({
     stepId: "04-cleanup-tickets",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
@@ -209,6 +219,7 @@ export async function stepImplement(
 
   await runAgentStep({
     stepId: "05-implement",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
@@ -268,6 +279,7 @@ export async function stepReview(
 
   await runAgentStep({
     stepId: "05-review",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
@@ -310,6 +322,7 @@ export async function stepUxPlan(ctx: Ctx, sprint: SprintSnapshot): Promise<void
 
   await runAgentStep({
     stepId: "05.5-ux-plan",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number, commitSummaries },
@@ -326,6 +339,7 @@ export async function stepUxTest(ctx: Ctx, sprint: SprintSnapshot): Promise<void
 
   await runAgentStep({
     stepId: "05.5-ux-test",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
@@ -351,6 +365,7 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
 
   await runAgentStep({
     stepId: "05.5-ux-tickets",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
@@ -412,6 +427,7 @@ export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void
 
   await runAgentStep({
     stepId: "06-report",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
@@ -441,6 +457,7 @@ export async function stepVisionStatus(ctx: Ctx, sprint: SprintSnapshot): Promis
 
   await runAgentStep({
     stepId: "07-vision-status",
+    description: ctx.phaseDescription,
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: {
