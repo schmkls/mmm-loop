@@ -2,13 +2,15 @@
  * with the fake `claude` emitting canned outputs for every step. */
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  currentBranch,
   freshTicket,
-  gitSubjects,
   invocations,
   invocationText,
+  localBranches,
+  logSubjects,
   makeProject,
   makeSprint,
   readTicket,
@@ -62,8 +64,10 @@ describe("e2e dry run", () => {
       expect(invocations(p).filter((f) => f.includes(step)).length).toBe(1);
     }
 
-    // The exact commit trail, oldest first (spec §6.4 conventions).
-    expect(gitSubjects(p).reverse()).toEqual([
+    // The exact commit trail, oldest first (spec §6.4 conventions). The
+    // sprint ran on sprint/01 and was merged back: the --no-ff merge commit
+    // closes the trail, and all sprint work is reachable from main.
+    expect(logSubjects(p, "main").reverse()).toEqual([
       "chore: scaffold",
       "chore(loop): sprint 01 focus",
       "chore(loop): sprint 01 spec",
@@ -82,7 +86,16 @@ describe("e2e dry run", () => {
       "chore(loop): sprint 01 ticket 003 reviewed",
       "chore(loop): sprint 01 report",
       "chore(loop): sprint 01 vision status",
+      "chore(loop): merge sprint 01",
     ]);
+
+    // Sprint-branch lifecycle (spec §6.4): a real --no-ff merge commit sits
+    // on main and no sprint/* branch remains.
+    expect(currentBranch(p)).toBe("main");
+    expect(localBranches(p)).toEqual(["main"]);
+    expect(sh(p.root, "git", "rev-list", "--parents", "-n1", "main").trim().split(" ").length).toBe(
+      3,
+    );
 
     // The ux findings commit contains exactly the findings file — the test
     // agent's scratch artifacts must never be committed.
@@ -122,9 +135,10 @@ describe("e2e dry run", () => {
     expect(waitLines[0]).toMatch(/^\[mmm-loop\] usage limit reached; waiting .+ — resuming at \d{2}:\d{2}$/);
 
     // The limited attempt was re-spawned: step 2 ran twice, and the run's
-    // artifact trail is byte-identical to the plain happy path's.
+    // artifact trail is byte-identical to the plain happy path's — same
+    // commits on main, closed by the same sprint merge (spec §6.4).
     expect(invocations(p).filter((f) => f.includes("02-sprint-focus")).length).toBe(2);
-    expect(gitSubjects(p).reverse()).toEqual([
+    expect(logSubjects(p, "main").reverse()).toEqual([
       "chore: scaffold",
       "chore(loop): sprint 01 focus",
       "chore(loop): sprint 01 spec",
@@ -143,6 +157,7 @@ describe("e2e dry run", () => {
       "chore(loop): sprint 01 ticket 003 reviewed",
       "chore(loop): sprint 01 report",
       "chore(loop): sprint 01 vision status",
+      "chore(loop): merge sprint 01",
     ]);
     expect(readFileSync(join(p.root, "docs/sprint_reports.html"), "utf8")).toContain(
       '<section id="sprint-01">',
@@ -164,6 +179,11 @@ describe("e2e dry run", () => {
     expect(r1.stderr).toContain("human intervention");
     const blocked = readTicket(p, "01-toy-feature", "001-toy-part-1.json");
     expect(blocked.needs_human_intervention).toBe(true);
+    // The blocked sprint's branch is left checked out, nothing merged: main
+    // has none of the sprint's commits (spec §6.4).
+    expect(currentBranch(p)).toBe("sprint/01");
+    expect(localBranches(p)).toEqual(["main", "sprint/01"]);
+    expect(logSubjects(p, "main")).toEqual(["chore: scaffold"]);
     // Report and vision status were still produced (spec §9).
     expect(readFileSync(join(p.root, "docs/sprint_reports.html"), "utf8")).toContain(
       '<section id="sprint-01">',
@@ -194,6 +214,11 @@ describe("e2e dry run", () => {
     const t = readTicket(p, "01-toy-feature", "001-toy-part-1.json");
     expect(t.done).toBe(true);
     expect(t.reviewed).toBe(true);
+
+    // The finished sprint was merged and its branch deleted (spec §6.4).
+    expect(currentBranch(p)).toBe("main");
+    expect(localBranches(p)).toEqual(["main"]);
+    expect(logSubjects(p, "main")).toContain("chore(loop): merge sprint 01");
   }, 60000);
 
   test("partially unblocked sprint: remaining blocked ticket still halts with exit 2", () => {
@@ -305,5 +330,187 @@ describe("e2e dry run", () => {
     expect(readFileSync(join(p.root, ".working/vision_status.md"), "utf8")).toStartWith(
       "_Last updated: sprint 01_",
     );
+  }, 60000);
+});
+
+/** Sprint branches (spec §6.4): each sprint runs on its own `sprint/NN`
+ * branch, merged back into main when clean, left checked out when blocked. */
+describe("e2e sprint branches", () => {
+  const quietUx = { SCENARIO_UX_TEST: "none", SCENARIO_UX_TICKETS: "zero" };
+
+  const phaseLines = (stdout: string) => stdout.split("\n").filter((l) => l.includes("phase:"));
+
+  test("rerun while blocked, without unblocking → exit 2 again, not a new sprint (spec §6.4 merge-or-leave)", () => {
+    const p = makeProject();
+    const r1 = runLoop(p, ["run"], {
+      SCENARIO_TICKETS_COUNT: "1",
+      SCENARIO_IMPLEMENT: "blocked",
+      ...quietUx,
+    });
+    expect(r1.exitCode).toBe(2);
+
+    // Rerun with nothing unblocked: the completed-but-blocked sprint must
+    // not fall through to new-sprint creation.
+    const r2 = runLoop(p, ["run"], { SCENARIO_TICKETS_COUNT: "1", ...quietUx });
+    expect(r2.exitCode).toBe(2);
+    expect(r2.stdout).not.toContain("phase: step 2");
+    // The message offers both options: unblock+rerun, or merge/delete manually.
+    expect(r2.stderr).toContain("sprint/01");
+    expect(r2.stderr).toContain("unblock");
+    expect(r2.stderr).toContain("abandon");
+    expect(readdirSync(join(p.root, ".working/sprints"))).toEqual(["01-toy-feature"]);
+    expect(currentBranch(p)).toBe("sprint/01");
+    expect(logSubjects(p, "main")).toEqual(["chore: scaffold"]);
+  }, 60000);
+
+  test("chained --max-sprints 2: two merge commits in order, sprint 02 branched from post-merge main", () => {
+    const p = makeProject();
+    const r = runLoop(p, ["run", "--max-sprints", "2"], quietUx);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("sprint 01 complete (1/2 this run)");
+    expect(r.stdout).toContain("sprint 02 complete (2/2 this run)");
+
+    const subjects = logSubjects(p, "main");
+    const merge01 = subjects.indexOf("chore(loop): merge sprint 01");
+    const merge02 = subjects.indexOf("chore(loop): merge sprint 02");
+    expect(merge01).toBeGreaterThan(-1);
+    expect(merge02).toBeGreaterThan(-1);
+    expect(merge02).toBeLessThan(merge01); // newest first: 02's merge is later
+    expect(subjects.filter((s) => s.startsWith("chore(loop): merge sprint")).length).toBe(2);
+
+    // sprint/02 branched from post-merge main: sprint 01's files are in
+    // sprint 02's history (main's second parent is sprint/02's tip).
+    expect(
+      sh(p.root, "git", "show", "main^2:.working/sprints/01-toy-feature/spec.md"),
+    ).toContain("Spec");
+
+    expect(currentBranch(p)).toBe("main");
+    expect(localBranches(p)).toEqual(["main"]);
+  }, 120000);
+
+  test("resume mid-sprint from main: preflight checks out the sprint branch and the sprint completes", () => {
+    const p = makeProject();
+    // Run 1 dies mid-sprint (UX plan fails its postcondition twice → exit 1)
+    // with focus/spec/tickets/implement/review done on sprint/01.
+    const r1 = runLoop(p, ["run"], { SCENARIO_UX_PLAN: "nothing" });
+    expect(r1.exitCode).toBe(1);
+    expect(currentBranch(p)).toBe("sprint/01");
+
+    // The human (or a fresh shell) is back on main; rerun from there.
+    sh(p.root, "git", "checkout", "main");
+    const r2 = runLoop(p, ["run"], quietUx);
+    expect(r2.exitCode).toBe(0);
+    // Preflight checked out sprint/01 and derivation resumed mid-sprint.
+    expect(phaseLines(r2.stdout)[0]).toContain("step 5.5.1 — ux plan");
+    expect(r2.stdout).not.toContain("phase: step 2");
+    expect(logSubjects(p, "main")).toContain("chore(loop): merge sprint 01");
+    expect(localBranches(p)).toEqual(["main"]);
+  }, 60000);
+
+  test("crash between merge and branch-delete: rerun cleans up with no duplicate merge commit", () => {
+    const p = makeProject();
+    expect(runLoop(p, ["run"], quietUx).exitCode).toBe(0);
+    // Simulate the crash window: the merge landed but the branch survived.
+    sh(p.root, "git", "branch", "sprint/01", "main^2");
+
+    // Rerun: preflight checks out the fully-merged branch, the merge re-runs
+    // as a no-op, delete proceeds, and the run continues into sprint 02.
+    const r = runLoop(p, ["run"], quietUx);
+    expect(r.exitCode).toBe(0);
+    const subjects = logSubjects(p, "main");
+    expect(subjects.filter((s) => s === "chore(loop): merge sprint 01").length).toBe(1);
+    expect(subjects.filter((s) => s === "chore(loop): merge sprint 02").length).toBe(1);
+    expect(localBranches(p)).toEqual(["main"]);
+  }, 120000);
+
+  test("preflight refusal: on a feature branch with no sprint branch → exit 1", () => {
+    const p = makeProject();
+    sh(p.root, "git", "checkout", "-b", "feature/x");
+    const r = runLoop(p);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('"feature/x"');
+    expect(r.stderr).toContain('"main"');
+    expect(existsSync(join(p.root, ".working/sprints"))).toBe(false);
+  }, 60000);
+
+  test("preflight refusal: two sprint branches → exit 1 listing both", () => {
+    const p = makeProject();
+    sh(p.root, "git", "branch", "sprint/01");
+    sh(p.root, "git", "branch", "sprint/02");
+    const r = runLoop(p);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("sprint/01");
+    expect(r.stderr).toContain("sprint/02");
+    expect(existsSync(join(p.root, ".working/sprints"))).toBe(false);
+  }, 60000);
+
+  test("preflight refusal: missing BASE_BRANCH → exit 1", () => {
+    const p = makeProject();
+    sh(p.root, "git", "branch", "-m", "main", "trunk");
+    const r = runLoop(p);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain('BASE_BRANCH "main"');
+  }, 60000);
+
+  test("adoption: pre-feature in-progress sprint on main → sprint/NN created at HEAD, finished there", () => {
+    const p = makeProject();
+    // A pre-feature project: the in-progress sprint's state lives on main.
+    makeSprint(p, { tickets: { "001-a.json": freshTicket("001") } });
+    const r = runLoop(p, ["run"], quietUx);
+    expect(r.exitCode).toBe(0);
+    // Resumed mid-sprint (no step 2) and moved onto a branch from here on.
+    expect(phaseLines(r.stdout)[0]).toContain("step 5.1 — implement 001-a.json");
+    expect(r.stdout).not.toContain("phase: step 2");
+    const subjects = logSubjects(p, "main");
+    expect(subjects).toContain("chore(loop): merge sprint 01");
+    // The remaining work really went through the branch: the merge commit
+    // has two parents.
+    expect(sh(p.root, "git", "rev-list", "--parents", "-n1", "main").trim().split(" ").length).toBe(
+      3,
+    );
+    expect(currentBranch(p)).toBe("main");
+    expect(localBranches(p)).toEqual(["main"]);
+  }, 60000);
+
+  test("merge conflict with a human commit on main → exit 1, merge aborted, nothing half-merged", () => {
+    const p = makeProject();
+    // A completed, clean sprint on sprint/01 …
+    sh(p.root, "git", "checkout", "-b", "sprint/01");
+    makeSprint(p, {
+      tickets: {
+        "001-a.json": freshTicket("001", {
+          done: true,
+          reviewed: true,
+          tests: [{ description: "works", passes: true }],
+        }),
+      },
+      ux: { plan: true, findings: "yes" },
+    });
+    writeFileSync(
+      join(p.root, "docs/sprint_reports.html"),
+      '<main><section id="sprint-01">x</section></main>',
+    );
+    writeFileSync(
+      join(p.root, ".working/vision_status.md"),
+      "_Last updated: sprint 01_\n\n# Vision status\n\n## What exists now\n\nx\n",
+    );
+    writeFileSync(join(p.root, "shared.txt"), "sprint version\n");
+    sh(p.root, "git", "add", "-A");
+    sh(p.root, "git", "commit", "-q", "-m", "test: complete sprint 01 on its branch");
+    // … and a colliding human commit on main.
+    sh(p.root, "git", "checkout", "main");
+    writeFileSync(join(p.root, "shared.txt"), "human version\n");
+    sh(p.root, "git", "add", "-A");
+    sh(p.root, "git", "commit", "-q", "-m", "human: conflicting change");
+
+    const r = runLoop(p);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("conflict");
+    expect(r.stderr).toContain("manually");
+    // The abort ran: no merge in progress, clean tree, branch left for the human.
+    expect(existsSync(join(p.root, ".git/MERGE_HEAD"))).toBe(false);
+    expect(sh(p.root, "git", "status", "--porcelain").trim()).toBe("");
+    expect(currentBranch(p)).toBe("main");
+    expect(localBranches(p)).toEqual(["main", "sprint/01"]);
   }, 60000);
 });

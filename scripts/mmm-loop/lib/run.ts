@@ -6,11 +6,21 @@
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { ALLOWED_CLAUDE_USER, CLEANUP_CADENCE } from "../config.ts";
+import { ALLOWED_CLAUDE_USER, BASE_BRANCH, CLEANUP_CADENCE } from "../config.ts";
+import { preflightAction, sprintBranch } from "./branches.ts";
 import { claudeUserProblem } from "./claude-user.ts";
 import { isCadenceCleanup } from "./cleanup.ts";
 import { colorEnabled, style } from "./console.ts";
 import { BlockedError, LoopError } from "./errors.ts";
+import {
+  gitBranchExists,
+  gitCheckout,
+  gitCreateBranch,
+  gitCurrentBranch,
+  gitDeleteMergedBranch,
+  gitLocalBranches,
+  gitMergeNoFF,
+} from "./git.ts";
 import { derivePhase } from "./phases.ts";
 import { missingRequiredFiles } from "./scaffold.ts";
 import { readSnapshot, sprintsDir } from "./snapshot.ts";
@@ -57,6 +67,22 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
   const userProblem = claudeUserProblem(allowedUser);
   if (userProblem) throw new LoopError(userProblem);
 
+  // Branch preflight (spec §6.4): derivation reads the checked-out tree, so
+  // the right branch must be checked out before the first readSnapshot.
+  if (!(await gitBranchExists(ctx.root, BASE_BRANCH))) {
+    throw new LoopError(
+      `BASE_BRANCH "${BASE_BRANCH}" does not exist in this repository; ` +
+        `create it or change BASE_BRANCH in scripts/mmm-loop/config.ts.`,
+    );
+  }
+  const action = preflightAction(
+    await gitCurrentBranch(ctx.root),
+    await gitLocalBranches(ctx.root),
+    BASE_BRANCH,
+  );
+  if (action.kind === "error") throw new LoopError(action.message);
+  if (action.kind === "checkout") await gitCheckout(ctx.root, action.branch);
+
   let completedThisRun = 0;
   // dirName of the sprint whose steps this run has executed — so a sprint
   // that closes without re-running steps 6/7 (resume after a human unblock,
@@ -75,11 +101,35 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
     // the previous one (if any) is fully complete. Apply spec §9 here.
     if (phase.step === "sprint-focus" && phase.reuseDirName === null) {
       const latest = snapshot.sprints.at(-1);
-      if (latest && latest.dirName === workedOnSprint) {
+
+      // Merge-or-leave (spec §6.4): the latest sprint is fully complete; if
+      // we are on its branch, merge it into base (clean) or halt (blocked).
+      // Deliberately regardless of workedOnSprint — a resumed run that finds
+      // the completed sprint blocked must exit 2 again, never fall through
+      // to new-sprint creation (base lacks the sprint's .working/ state).
+      if (latest && (await gitCurrentBranch(ctx.root)) === sprintBranch(latest.number)) {
+        const branch = sprintBranch(latest.number);
         const blocked = (latest.tickets ?? [])
           .filter(({ ticket }) => ticket.needs_human_intervention)
           .map(({ ticket }) => `sprint ${latest.number}, ticket ${ticket.id}: ${ticket.title}`);
-        if (blocked.length > 0) throw new BlockedError(blocked);
+        if (blocked.length > 0) throw new BlockedError(blocked, branch);
+        await gitCheckout(ctx.root, BASE_BRANCH);
+        const merge = await gitMergeNoFF(
+          ctx.root,
+          branch,
+          `chore(loop): merge sprint ${latest.number}`,
+        );
+        if (merge === "conflict") {
+          throw new LoopError(
+            `Merging ${branch} into ${BASE_BRANCH} hit a conflict (the merge was aborted). ` +
+              `Merge ${branch} into ${BASE_BRANCH} manually, then rerun.`,
+          );
+        }
+        await gitDeleteMergedBranch(ctx.root, branch);
+        console.log(`[mmm-loop] merged ${branch} into ${BASE_BRANCH}`);
+      }
+
+      if (latest && latest.dirName === workedOnSprint) {
         completedThisRun += 1;
         workedOnSprint = null;
         console.log(
@@ -95,6 +145,15 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
           console.log("[mmm-loop] --cleanup had no effect: this run created no new sprint");
         }
         return;
+      }
+
+      // New-sprint branch (spec §6.4): created from the base branch's HEAD
+      // (we are on base here — guaranteed by the merge above + preflight)
+      // before any agent or folder-creation runs for the sprint. The
+      // already-on-it check makes the crash window between branch creation
+      // and folder creation idempotent.
+      if ((await gitCurrentBranch(ctx.root)) !== sprintBranch(phase.sprintNumber)) {
+        await gitCreateBranch(ctx.root, sprintBranch(phase.sprintNumber));
       }
 
       // Cleanup sprint creation (spec §6.1): the orchestrator, not an agent,
@@ -116,6 +175,20 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
           ),
         );
         continue; // re-derive: lands on cleanup-identify
+      }
+    }
+
+    // Ensure the sprint's branch is checked out before dispatching (spec
+    // §6.4). Normally a no-op (the branch was created at the boundary above,
+    // or the preflight checked it out); create-at-HEAD covers adopting a
+    // pre-feature project whose in-progress sprint lives on the base branch.
+    {
+      const branch = sprintBranch(
+        phase.step === "sprint-focus" ? phase.sprintNumber : phase.sprint.number,
+      );
+      if ((await gitCurrentBranch(ctx.root)) !== branch) {
+        if (await gitBranchExists(ctx.root, branch)) await gitCheckout(ctx.root, branch);
+        else await gitCreateBranch(ctx.root, branch);
       }
     }
 

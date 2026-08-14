@@ -44,6 +44,67 @@ export async function gitSummaries(cwd: string, shas: string[]): Promise<string>
   return out.trim();
 }
 
+// --------------------------------------------------------------- branches
+// Sprint-branch plumbing (spec §6.4): the orchestrator creates, checks out,
+// merges, and deletes `sprint/NN` branches; agents never touch branches.
+
+/** Name of the currently checked-out branch. */
+export async function gitCurrentBranch(cwd: string): Promise<string> {
+  return (await git(cwd, "rev-parse", "--abbrev-ref", "HEAD")).trim();
+}
+
+/** All local branch names (short form, e.g. "main", "sprint/01"). */
+export async function gitLocalBranches(cwd: string): Promise<string[]> {
+  const out = await git(cwd, "for-each-ref", "refs/heads", "--format=%(refname:short)");
+  return out.split("\n").filter(Boolean);
+}
+
+export async function gitBranchExists(cwd: string, name: string): Promise<boolean> {
+  return (await gitLocalBranches(cwd)).includes(name);
+}
+
+export async function gitCheckout(cwd: string, name: string): Promise<void> {
+  await git(cwd, "checkout", name);
+}
+
+/** Create `name` at the current HEAD and check it out. */
+export async function gitCreateBranch(cwd: string, name: string): Promise<void> {
+  await git(cwd, "checkout", "-b", name);
+}
+
+/** Delete a fully-merged branch. `-d` (not `-D`) on purpose: refusing to
+ * delete an unmerged branch is a free extra safety check. */
+export async function gitDeleteMergedBranch(cwd: string, name: string): Promise<void> {
+  await git(cwd, "branch", "-d", name);
+}
+
+/**
+ * `git merge --no-ff <name> -m <message>` into the current branch. On any
+ * failure the merge is aborted (best-effort) and "conflict" is returned
+ * instead of throwing — the caller owns the message. The orchestrator never
+ * attempts conflict resolution.
+ */
+export async function gitMergeNoFF(
+  cwd: string,
+  name: string,
+  message: string,
+): Promise<"merged" | "conflict"> {
+  const proc = Bun.spawn(["git", "merge", "--no-ff", name, "-m", message], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    // Abort whatever half-merge state remains; ignore this command's own
+    // failure (there is no merge in progress when e.g. the checkout failed).
+    const abort = Bun.spawn(["git", "merge", "--abort"], { cwd, stdout: "pipe", stderr: "pipe" });
+    await abort.exited;
+    return "conflict";
+  }
+  return "merged";
+}
+
 /**
  * Stage the given paths and commit if anything changed under them. Loop
  * artifacts only — agent code commits are the implement agent's job.

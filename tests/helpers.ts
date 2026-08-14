@@ -187,7 +187,24 @@ export function readTicket(p: TestProject, dirName: string, filename: string): T
 
 /** Commit subjects, newest first. */
 export function gitSubjects(p: TestProject): string[] {
-  return sh(p.root, "git", "log", "--format=%s").trim().split("\n");
+  return logSubjects(p, "HEAD");
+}
+
+/** Commit subjects reachable from `ref`, newest first. `--topo-order` keeps
+ * the order deterministic across merge commits (children before parents). */
+export function logSubjects(p: TestProject, ref: string): string[] {
+  return sh(p.root, "git", "log", "--topo-order", "--format=%s", ref).trim().split("\n");
+}
+
+export function currentBranch(p: TestProject): string {
+  return sh(p.root, "git", "rev-parse", "--abbrev-ref", "HEAD").trim();
+}
+
+export function localBranches(p: TestProject): string[] {
+  return sh(p.root, "git", "for-each-ref", "refs/heads", "--format=%(refname:short)")
+    .trim()
+    .split("\n")
+    .filter(Boolean);
 }
 
 /** Invocation log filenames (chronological) — e.g. ["01-03-spec.txt"]. */

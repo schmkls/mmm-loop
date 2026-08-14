@@ -41,6 +41,8 @@ processes) are used only for the creative work inside each step.
    modifiable per project.
 7. **Crash-safe** — the current phase is derived from filesystem state, so the
    loop can be killed and rerun at any point without losing or orphaning work.
+   Including branch state: the local `sprint/NN` branch list *is* the state
+   (§6.4), so every branch-related crash window is idempotent on rerun.
 
 ## 3. Distribution and installation
 
@@ -183,7 +185,7 @@ agents).
 | Code | Meaning |
 |------|---------|
 | 0 | Requested sprints completed; nothing blocked |
-| 1 | Validation failed, or a step failed its postcondition twice (§6.3) |
+| 1 | Validation failed, or a step failed its postcondition twice (§6.3). Also: wrong branch at startup, broken sprint-branch invariant, or a sprint-merge conflict (§6.4) |
 | 2 | Sprint finished (report + vision status written) but tickets need human intervention |
 
 ## 6. Orchestrator
@@ -191,7 +193,9 @@ agents).
 ### 6.1 Phase derivation (resume)
 
 There is no state file. On every `run`, the orchestrator derives the current
-phase from the filesystem, making the loop idempotent and crash-safe. Given
+phase from the filesystem, making the loop idempotent and crash-safe.
+Derivation reads the checked-out tree, so the branch preflight (§6.4) runs
+first — it guarantees derivation is looking at the right branch. Given
 the latest sprint folder (highest `NN`):
 
 | Observed state | Next phase |
@@ -287,7 +291,53 @@ is persisted; a rerun derives the same step. Knobs: `RATE_LIMIT` in
 
 ### 6.4 Git conventions
 
-- Work happens directly on the current branch. No sprint branches, no PRs.
+- **Sprint branches.** Each sprint runs on its own branch, created and
+  managed by the **orchestrator** (never by an agent). A sprint becomes one
+  reviewable unit (`git diff main..sprint/NN`, and the merge commit marks
+  the boundary forever), and a blocked sprint stops contaminating the base.
+  - **Naming**: `sprint/NN` — derived from the sprint number alone (cleanup
+    sprints included; no slug, because for normal sprints the slug is chosen
+    by the step-2 agent *after* the branch must exist). `^sprint/\d{2}$` is
+    a reserved namespace; humans must not create branches matching it.
+  - **Base branch**: `BASE_BRANCH` in `config.ts` (default `"main"`).
+    Sprint branches are created from its HEAD at the new-sprint boundary
+    (the same place that decides sprint type, §6.1), **before** any agent or
+    folder-creation runs for the sprint, and merged back into it. A config
+    constant — not "whatever was checked out" — so the merge target is
+    deterministic across runs and resumes. Startup requires it to exist.
+  - **Startup preflight** (before the first snapshot read — derivation reads
+    the checked-out tree, §6.1): exactly one `sprint/NN` branch exists →
+    check it out; none, and `BASE_BRANCH` is checked out → proceed; none,
+    on any other branch → exit 1 telling the human to check out
+    `BASE_BRANCH`; more than one → exit 1 listing them (invariant broken,
+    human cleans up). Additionally, before dispatching any sprint-scoped
+    step the orchestrator ensures that sprint's branch is checked out,
+    **creating it at the current HEAD if it does not exist** — the create
+    case adopts a pre-feature project whose in-progress sprint lives on the
+    base branch.
+  - **Merge or leave**, at the sprint boundary (derivation says the latest
+    sprint is fully complete and its branch is checked out):
+    - *Clean* (no ticket has `needs_human_intervention: true`): check out
+      `BASE_BRANCH`, `git merge --no-ff sprint/NN -m "chore(loop): merge
+      sprint NN"`, delete the branch with `branch -d` (`-d`, not `-D`: a
+      free check that it really is merged). Merging happens before the
+      run's sprint counting, so a completed sprint merges even when it is
+      the run's last (`--max-sprints` reached).
+    - *Blocked*: exit 2, branch left checked out, nothing merged — also on
+      a resumed run that finds the completed sprint blocked (starting
+      sprint NN+1 from a base lacking sprint NN's `.working/` state would
+      corrupt derivation). The human unblocks and reruns (§10) — the loop
+      finishes the sprint, then merges — or abandons by merging/deleting
+      the branch manually; the error message states both options.
+    - *Merge conflict* (possible if a human committed to `BASE_BRANCH`
+      mid-sprint): `git merge --abort`, exit 1 telling the human to merge
+      manually and rerun. The orchestrator never resolves conflicts.
+  - **Invariant**: at most one `sprint/NN` branch exists at any time — the
+    in-progress (or completed-but-unmerged) sprint. Merging deletes it; the
+    next sprint creates the next one. There is no new state file: the
+    branch list *is* the state, and every crash window (between merge and
+    delete, between branch creation and folder creation) is idempotent.
+  - **No remotes, no PRs**: the loop never pushes; branches are local.
 - `.working/` is tracked in git — it is the loop's memory; resume and the
   report depend on it.
 - The **orchestrator** commits loop artifacts deterministically after each

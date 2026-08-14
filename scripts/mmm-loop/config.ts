@@ -52,6 +52,9 @@ export const STEP_CONFIG: Record<StepId, StepConfig> = {
  */
 export const CLEANUP_CADENCE = 3;
 
+/** Sprint branches are created from and merged into this branch (spec §6.4). */
+export const BASE_BRANCH = "main";
+
 /**
  * Only run when the logged-in Claude account has this email address
  * (case-insensitive). null = accept any account. Overridable with the

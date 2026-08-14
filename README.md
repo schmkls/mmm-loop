@@ -114,7 +114,29 @@ implemented it.
 diagram, key decisions, a banner for blocked tickets, UX findings that were
 not fixed, and a click-to-reveal quiz about the introduced code.
 
+Each sprint runs on its own `sprint/NN` git branch (created and merged by
+the orchestrator, never by an agent). A sprint that completes clean is
+merged back into `main` with a `--no-ff` merge commit and its branch is
+deleted — one merge commit per sprint, so the history reads sprint by
+sprint:
+
+```
+$ git log --graph --oneline main
+*   f3a21c9 chore(loop): merge sprint 02
+|\
+| * 9d0e1f2 chore(loop): sprint 02 vision status
+| * ...
+|/
+*   a1b2c3d chore(loop): merge sprint 01
+|\
+| * ...
+```
+
 ## When the loop gets stuck (exit 2)
+
+A blocked sprint's `sprint/NN` branch is left checked out and unmerged —
+`main` has none of the sprint's work, and `git diff main..sprint/NN` is the
+whole sprint, reviewable in one sitting.
 
 1. Open `docs/sprint_reports.html` — blocked tickets are the banner at the
    top — or grep for `"needs_human_intervention": true` in
@@ -128,7 +150,9 @@ bun scripts/mmm-loop/loop.ts run
 ```
 
 The loop resumes exactly at that ticket, and the implement agent's prompt
-includes your note.
+includes your note. When the sprint then finishes clean, it is merged into
+`main` as usual. To abandon a blocked sprint instead, merge or delete its
+branch yourself — rerunning without doing either just exits 2 again.
 
 ## How the loop works
 
@@ -283,10 +307,11 @@ All knobs live in the copy inside your project:
 - **`scripts/mmm-loop/config.ts`** — per-step model, reasoning effort, and
   max turns (defaults: Fable 5 at max effort for planning/implement/review,
   Haiku for the mechanical vision-status rewrite), the cleanup-sprint cadence
-  (`CLEANUP_CADENCE`, default every 3rd sprint), plus the permission flags
-  passed to `claude`. The default is `--dangerously-skip-permissions`; swap
-  in `--permission-mode acceptEdits` and an allowlist if that's too spicy for
-  a project.
+  (`CLEANUP_CADENCE`, default every 3rd sprint), the base branch that sprint
+  branches are created from and merged into (`BASE_BRANCH`, default `main`),
+  plus the permission flags passed to `claude`. The default is
+  `--dangerously-skip-permissions`; swap in `--permission-mode acceptEdits`
+  and an allowlist if that's too spicy for a project.
 - **`ALLOWED_CLAUDE_USER`** (also in `config.ts`) — pin the loop to one
   Claude account: when set to an email, a run aborts at startup unless that
   account is logged in (case-insensitive), so an overnight run can't bill
