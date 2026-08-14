@@ -53,6 +53,13 @@ export const STEP_CONFIG: Record<StepId, StepConfig> = {
 export const CLEANUP_CADENCE = 3;
 
 /**
+ * Only run when the logged-in Claude account has this email address
+ * (case-insensitive). null = accept any account. Overridable with the
+ * MMM_LOOP_ALLOWED_CLAUDE_USER env var (env wins; used by tests).
+ */
+export const ALLOWED_CLAUDE_USER: string | null = null;
+
+/**
  * Autonomous means autonomous (spec §7). If that is too spicy for a given
  * project, replace with e.g. ["--permission-mode", "acceptEdits",
  * "--allowedTools", "..."].

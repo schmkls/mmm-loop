@@ -156,6 +156,28 @@ Two independent triggers make a newly *created* sprint a **cleanup sprint**
 produce consecutive cleanup sprints (e.g. 02 forced, 03 by cadence); that is
 accepted, not prevented — a forced cleanup does not reset the cadence.
 
+### Allowed Claude user
+
+`config.ts` can pin `run` to one Claude account:
+
+```ts
+/**
+ * Only run when the logged-in Claude account has this email address
+ * (case-insensitive). null = accept any account. Overridable with the
+ * MMM_LOOP_ALLOWED_CLAUDE_USER env var (env wins; used by tests).
+ */
+export const ALLOWED_CLAUDE_USER: string | null = null;
+```
+
+The default `null` skips the check entirely — zero cost when unused. When
+set, step 1 (§8.1) refuses to start as any other account: the loop burns
+real tokens unattended, and running overnight on the wrong login (work vs.
+personal) bills the wrong subscription. The env var
+`MMM_LOOP_ALLOWED_CLAUDE_USER` overrides the constant when set (same idiom
+as `MMM_LOOP_CLAUDE_BIN`); an empty-string value means "accept any" — an
+explicit off-switch for one run. `init` does not check (it spawns no
+agents).
+
 ### Exit codes
 
 | Code | Meaning |
@@ -377,6 +399,17 @@ Checks that these exist (existence only, not content):
 Missing any → exit 1 with a message listing exactly which files are missing
 and suggesting `init`. Note: `docs/sprint_reports.html` is *generated* by
 step 6 and is **not** validated here.
+
+Step 1 also validates the logged-in Claude user when `ALLOWED_CLAUDE_USER`
+(§5) is set: the account email is read from Claude Code's own config
+(`$CLAUDE_CONFIG_DIR/.claude.json` when set, else `~/.claude.json` — the
+mechanism is isolated in one function) and compared case-insensitively,
+whitespace trimmed. A mismatch aborts with exit 1 naming both addresses; an
+undeterminable user (no config file, no login — e.g. API-key auth, which
+has no logged-in account) fails **closed** with exit 1 and guidance
+(`/status` inside `claude`, or set the constant back to `null`). Checked
+once at startup, before any agent spawns or git operation; an account
+switch mid-run is out of scope.
 
 ### 8.2 Step 2 — Sprint focus (agent)
 

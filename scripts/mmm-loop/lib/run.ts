@@ -6,7 +6,8 @@
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { CLEANUP_CADENCE } from "../config.ts";
+import { ALLOWED_CLAUDE_USER, CLEANUP_CADENCE } from "../config.ts";
+import { claudeUserProblem } from "./claude-user.ts";
 import { isCadenceCleanup } from "./cleanup.ts";
 import { colorEnabled, style } from "./console.ts";
 import { BlockedError, LoopError } from "./errors.ts";
@@ -44,6 +45,17 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
         `\nRun \`bun scripts/mmm-loop/loop.ts init\` to scaffold them.`,
     );
   }
+
+  // Step 1 continued (spec §8.1): refuse to run as the wrong Claude account.
+  // Checked once at startup, before any agent spawns or git operation; an
+  // account switch mid-run is out of scope. Env override wins when set;
+  // empty string = explicit "accept any" for this run.
+  const allowedUser =
+    process.env.MMM_LOOP_ALLOWED_CLAUDE_USER !== undefined
+      ? process.env.MMM_LOOP_ALLOWED_CLAUDE_USER || null
+      : ALLOWED_CLAUDE_USER;
+  const userProblem = claudeUserProblem(allowedUser);
+  if (userProblem) throw new LoopError(userProblem);
 
   let completedThisRun = 0;
   // dirName of the sprint whose steps this run has executed — so a sprint

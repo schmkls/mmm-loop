@@ -287,6 +287,12 @@ All knobs live in the copy inside your project:
   passed to `claude`. The default is `--dangerously-skip-permissions`; swap
   in `--permission-mode acceptEdits` and an allowlist if that's too spicy for
   a project.
+- **`ALLOWED_CLAUDE_USER`** (also in `config.ts`) — pin the loop to one
+  Claude account: when set to an email, a run aborts at startup unless that
+  account is logged in (case-insensitive), so an overnight run can't bill
+  the wrong subscription. Default `null` = accept any account. The
+  `MMM_LOOP_ALLOWED_CLAUDE_USER` env var overrides per run (empty string =
+  accept any).
 - **`scripts/mmm-loop/prompts/*.md`** — the twelve step prompts. Editing them
   per project is normal and expected.
 
