@@ -3,6 +3,8 @@
  * Fake `claude` binary for tests (injected via MMM_LOOP_CLAUDE_BIN).
  *
  * - Logs every invocation (argv + prompt) to $FAKE_CLAUDE_LOG/NN-<step>.txt.
+ * - $SCENARIO_RATE_LIMIT pre-dispatch: fake a Claude usage limit first (see
+ *   rate-limit-hook.ts) — rate-limited invocations are still logged.
  * - Dispatches to $FAKE_CLAUDE_SCENARIO/<step>.ts based on the
  *   `<!-- mmm-loop:step:... -->` marker every prompt template starts with,
  *   passing the prompt on stdin, cwd unchanged. No scenario script → no-op.
@@ -10,6 +12,7 @@
 
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { rateLimitHook } from "./rate-limit-hook.ts";
 
 const prompt = await Bun.stdin.text();
 const stepId = /<!-- mmm-loop:step:([a-z0-9.-]+) -->/.exec(prompt)?.[1] ?? "unknown";
@@ -23,6 +26,8 @@ if (logDir) {
     `ARGV: ${process.argv.slice(2).join(" ")}\n---\n${prompt}`,
   );
 }
+
+rateLimitHook();
 
 const scenarioDir = process.env.FAKE_CLAUDE_SCENARIO;
 if (scenarioDir) {

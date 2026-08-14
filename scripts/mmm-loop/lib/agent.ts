@@ -2,12 +2,15 @@
  * The agent-spawn wrapper (spec §6.2–§6.3, §7): every agent step runs through
  * runAgentStep — fill the prompt, spawn a fresh `claude -p`, await it, check
  * the step's postcondition, retry once with the failure appended, then die.
+ * Exception: a run that dies on a usage/rate limit is waited out and
+ * re-spawned at this level, invisible to the postcondition retry (spec §6.3).
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PERMISSION_ARGS, STEP_CONFIG, type Effort, type StepId } from "../config.ts";
 import { LoopError } from "./errors.ts";
+import { computeWaitMs, detectRateLimit, effectiveRateLimitConfig } from "./ratelimit.ts";
 import { fillTemplate } from "./template.ts";
 
 /** Overridable so tests can inject a fake `claude`. */
@@ -111,18 +114,59 @@ async function spawnClaude(step: AgentStep, prompt: string): Promise<SpawnResult
   };
 }
 
+function fmtDuration(ms: number): string {
+  const totalMinutes = Math.round(ms / 60_000);
+  if (totalMinutes === 0) return `${Math.ceil(ms / 1000)}s`;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ""}` : `${m}m`;
+}
+
+function fmtClock(atMs: number): string {
+  const d = new Date(atMs);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Spawn `claude`, and when a non-zero exit is a rate/usage limit (spec §6.3),
+ * wait out the limit and re-run the same attempt. Invisible to the
+ * postcondition retry: a rate-limited run never reaches the check, and a
+ * zero exit is never classified. Gives up with LoopError after
+ * maxConsecutiveWaits consecutive rate-limited attempts.
+ */
+async function spawnWithRateLimitWaits(step: AgentStep, prompt: string): Promise<string | null> {
+  for (let waits = 0; ; waits++) {
+    const r = await spawnClaude(step, prompt);
+    if (r.exitCode === 0) return null;
+    const hit = detectRateLimit(r.outputTail);
+    if (!hit) return r.failure; // ordinary failure — existing §6.3 path
+    const cfg = effectiveRateLimitConfig();
+    if (waits >= cfg.maxConsecutiveWaits) {
+      throw new LoopError(
+        `Step ${step.stepId}: still rate-limited after ${waits} waits. ` +
+          `Either the account is out of quota for a long stretch or the output is misclassified — a human should look.`,
+      );
+    }
+    const ms = computeWaitMs(hit, Date.now(), cfg);
+    console.error(
+      `[mmm-loop] usage limit reached; waiting ${fmtDuration(ms)} — resuming at ${fmtClock(Date.now() + ms)}`,
+    );
+    await Bun.sleep(ms);
+  }
+}
+
 export async function runAgentStep(step: AgentStep): Promise<void> {
   const template = readFileSync(join(step.bundleDir, "prompts", `${step.stepId}.md`), "utf8");
   const prompt = fillTemplate(template, step.vars);
 
-  let failure = (await spawnClaude(step, prompt)).failure ?? (await step.check());
+  let failure = (await spawnWithRateLimitWaits(step, prompt)) ?? (await step.check());
   if (failure === null) return;
 
   console.error(`[mmm-loop] step ${step.stepId} failed postcondition, retrying once: ${failure}`);
   const retryPrompt =
     prompt +
     `\n\n## PREVIOUS ATTEMPT FAILED\n\nA previous run of this step did not produce the expected output:\n\n${failure}\n\nCorrect this now. Produce exactly the expected output described above.`;
-  failure = (await spawnClaude(step, retryPrompt)).failure ?? (await step.check());
+  failure = (await spawnWithRateLimitWaits(step, retryPrompt)) ?? (await step.check());
   if (failure !== null) {
     throw new LoopError(
       `Step ${step.stepId} failed its postcondition twice. Last failure:\n${failure}\n` +

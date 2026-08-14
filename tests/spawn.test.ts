@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +6,16 @@ import { runAgentStep } from "../scripts/mmm-loop/lib/agent.ts";
 import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
 
 const SPAWN_FAKE = join(import.meta.dir, "fixtures", "spawn-fake.ts");
-const ENV_KEYS = ["MMM_LOOP_CLAUDE_BIN", "SPAWNTEST_DIR", "SPAWNTEST_OUT", "SPAWNTEST_MODE"];
+const ENV_KEYS = [
+  "MMM_LOOP_CLAUDE_BIN",
+  "SPAWNTEST_DIR",
+  "SPAWNTEST_OUT",
+  "SPAWNTEST_MODE",
+  "SCENARIO_RATE_LIMIT",
+  "MMM_LOOP_RL_DEFAULT_WAIT_MS",
+  "MMM_LOOP_RL_RESET_MARGIN_MS",
+  "MMM_LOOP_RL_MAX_WAITS",
+];
 let saved: Map<string, string | undefined> | undefined;
 
 function setup(mode: string, promptBody = "Test prompt body.") {
@@ -89,5 +98,119 @@ describe("runAgentStep (spawn wrapper)", () => {
     const { step, prompts } = setup("succeed", "Hello {{bogus}}");
     await expect(runAgentStep(step)).rejects.toThrow(/\{\{bogus\}\}/);
     expect(prompts().length).toBe(0);
+  });
+});
+
+describe("runAgentStep — rate-limit waits (spec §6.3)", () => {
+  /** setup() plus a faked limit and test-shrunk waits. */
+  function setupRateLimited(mode: string, rateLimit: string, extra: Record<string, string> = {}) {
+    const s = setup(mode);
+    process.env.SCENARIO_RATE_LIMIT = rateLimit;
+    process.env.MMM_LOOP_RL_DEFAULT_WAIT_MS = "50";
+    process.env.MMM_LOOP_RL_RESET_MARGIN_MS = "0";
+    Object.assign(process.env, extra);
+    return s;
+  }
+
+  /** Spy on console.error, muted; returns the recorded wait lines. The
+   * lines are accumulated eagerly — mockRestore() wipes spy.mock.calls. */
+  function muteStderr() {
+    const lines: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+    return {
+      spy,
+      waitLines: () => lines.filter((l) => l.includes("usage limit reached; waiting")),
+    };
+  }
+
+  test("limited once → same attempt re-spawned after one wait, step succeeds", async () => {
+    const { step, prompts } = setupRateLimited("succeed", "1");
+    const { spy, waitLines } = muteStderr();
+    try {
+      await runAgentStep(step);
+    } finally {
+      spy.mockRestore();
+    }
+    const recorded = prompts();
+    expect(recorded.length).toBe(2);
+    // The re-spawn is the SAME attempt — not the §6.3 retry.
+    expect(recorded[1]).not.toContain("PREVIOUS ATTEMPT FAILED");
+    expect(waitLines().length).toBe(1);
+    expect(waitLines()[0]).toMatch(/^\[mmm-loop\] usage limit reached; waiting .+ — resuming at \d{2}:\d{2}$/);
+  });
+
+  test("parsed reset time ~2s out → waits for it, not the default", async () => {
+    const epoch = Math.ceil(Date.now() / 1000) + 2;
+    const { step, prompts } = setupRateLimited("succeed", `1:${epoch}`);
+    const { spy } = muteStderr();
+    const t0 = Date.now();
+    try {
+      await runAgentStep(step);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(1900); // default wait is 50ms here
+    expect(prompts().length).toBe(2);
+  }, 15000);
+
+  test("non-limit non-zero exit → existing behavior, no wait line", async () => {
+    const { step, prompts } = setupRateLimited("crash", "");
+    const { spy, waitLines } = muteStderr();
+    try {
+      await expect(runAgentStep(step)).rejects.toThrow(/exited with code 3/);
+    } finally {
+      spy.mockRestore();
+    }
+    const recorded = prompts();
+    expect(recorded.length).toBe(2);
+    expect(recorded[1]).toContain("PREVIOUS ATTEMPT FAILED");
+    expect(waitLines().length).toBe(0);
+  });
+
+  test("exit 0 printing limit-looking text → never classified, postcondition decides", async () => {
+    const { step, prompts } = setupRateLimited("fail-once", "zero-exit");
+    const { spy, waitLines } = muteStderr();
+    try {
+      await runAgentStep(step);
+    } finally {
+      spy.mockRestore();
+    }
+    const recorded = prompts();
+    expect(recorded.length).toBe(2);
+    expect(recorded[1]).toContain("PREVIOUS ATTEMPT FAILED"); // the ordinary retry, no waits
+    expect(waitLines().length).toBe(0);
+  });
+
+  test("maxConsecutiveWaits exceeded → LoopError naming step and count", async () => {
+    const { step, prompts } = setupRateLimited("succeed", "5", { MMM_LOOP_RL_MAX_WAITS: "2" });
+    const { spy, waitLines } = muteStderr();
+    try {
+      await expect(runAgentStep(step)).rejects.toThrow(
+        /Step 03-spec: still rate-limited after 2 waits/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(prompts().length).toBe(3); // two waited-out attempts, then give up
+    expect(waitLines().length).toBe(2);
+  });
+
+  test("a rate-limited attempt does not consume the §6.3 retry", async () => {
+    // Limited once, then the first real attempt fails its postcondition —
+    // the retry must still be available, so the step succeeds overall.
+    const { step, prompts } = setupRateLimited("fail-once", "1");
+    const { spy, waitLines } = muteStderr();
+    try {
+      await runAgentStep(step);
+    } finally {
+      spy.mockRestore();
+    }
+    const recorded = prompts();
+    expect(recorded.length).toBe(3);
+    expect(recorded[1]).not.toContain("PREVIOUS ATTEMPT FAILED"); // re-spawn of attempt 1
+    expect(recorded[2]).toContain("PREVIOUS ATTEMPT FAILED"); // the intact retry
+    expect(waitLines().length).toBe(1);
   });
 });

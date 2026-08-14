@@ -104,6 +104,51 @@ describe("e2e dry run", () => {
     expect(sh(p.root, "git", "status", "--porcelain").trim()).toBe("");
   }, 60000);
 
+  test("rate-limited step mid-run → one wait, then the identical artifact trail (spec §6.3)", () => {
+    const p = makeProject();
+    // First claude invocation fakes the usage-limit death (exit 1); waits
+    // shrunk so the run sleeps 50ms instead of 30 minutes.
+    const r = runLoop(p, ["run"], {
+      SCENARIO_RATE_LIMIT: "1",
+      MMM_LOOP_RL_DEFAULT_WAIT_MS: "50",
+      MMM_LOOP_RL_RESET_MARGIN_MS: "0",
+    });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toContain("[mmm-loop] done.");
+
+    // Exactly one wait line, on stderr.
+    const waitLines = r.stderr.split("\n").filter((l) => l.includes("usage limit reached; waiting"));
+    expect(waitLines.length).toBe(1);
+    expect(waitLines[0]).toMatch(/^\[mmm-loop\] usage limit reached; waiting .+ — resuming at \d{2}:\d{2}$/);
+
+    // The limited attempt was re-spawned: step 2 ran twice, and the run's
+    // artifact trail is byte-identical to the plain happy path's.
+    expect(invocations(p).filter((f) => f.includes("02-sprint-focus")).length).toBe(2);
+    expect(gitSubjects(p).reverse()).toEqual([
+      "chore: scaffold",
+      "chore(loop): sprint 01 focus",
+      "chore(loop): sprint 01 spec",
+      "chore(loop): sprint 01 tickets",
+      "feat(s01/001): implement toy part 1",
+      "chore(loop): sprint 01 ticket 001 status",
+      "chore(loop): sprint 01 ticket 001 reviewed",
+      "feat(s01/002): implement toy part 2",
+      "chore(loop): sprint 01 ticket 002 status",
+      "chore(loop): sprint 01 ticket 002 reviewed",
+      "chore(loop): sprint 01 ux plan",
+      "chore(loop): sprint 01 ux findings",
+      "chore(loop): sprint 01 ux tickets",
+      "feat(s01/003): implement toy output confusing",
+      "chore(loop): sprint 01 ticket 003 status",
+      "chore(loop): sprint 01 ticket 003 reviewed",
+      "chore(loop): sprint 01 report",
+      "chore(loop): sprint 01 vision status",
+    ]);
+    expect(readFileSync(join(p.root, "docs/sprint_reports.html"), "utf8")).toContain(
+      '<section id="sprint-01">',
+    );
+  }, 60000);
+
   test("blocked ticket → exit 2 → human unblocks with a note → rerun resumes at step 5 and finishes", () => {
     const p = makeProject();
 
