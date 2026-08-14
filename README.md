@@ -64,6 +64,16 @@ bun scripts/mmm-loop/loop.ts run --max-sprints 3
 A sprint that ends with blocked tickets always halts the run, regardless of
 sprints remaining.
 
+Every third sprint (the cadence is configurable, `0` disables it) runs as a
+**cleanup sprint** instead of a feature sprint: agents look for the single
+most obvious win in each of three categories — architecture, clean code,
+docs — and execute only what clears a high bar. Finding nothing is a valid,
+successful outcome, and `docs/vision.md` is never touched. Force one with:
+
+```bash
+bun scripts/mmm-loop/loop.ts run --cleanup
+```
+
 ### What a sprint does
 
 1. **Validate** — `CONTEXT.md`, `vision.md`, `vision_status.md` exist (else
@@ -155,11 +165,12 @@ All knobs live in the copy inside your project:
 
 - **`scripts/mmm-loop/config.ts`** — per-step model, reasoning effort, and
   max turns (defaults: Fable 5 at max effort for planning/implement/review,
-  Haiku for the mechanical vision-status rewrite), plus the permission flags
+  Haiku for the mechanical vision-status rewrite), the cleanup-sprint cadence
+  (`CLEANUP_CADENCE`, default every 3rd sprint), plus the permission flags
   passed to `claude`. The default is `--dangerously-skip-permissions` —
   that's what autonomous means; swap in `--permission-mode acceptEdits` and
   an allowlist if that's too spicy for a project.
-- **`scripts/mmm-loop/prompts/*.md`** — the ten step prompts. Editing them
+- **`scripts/mmm-loop/prompts/*.md`** — the twelve step prompts. Editing them
   per project is normal and expected.
 
 ## Developing mmm-loop itself

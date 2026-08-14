@@ -3,6 +3,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { CLEANUP_DIRNAME_RE } from "./cleanup.ts";
 import { LoopError } from "./errors.ts";
 import { TICKET_FILENAME_RE, validateTicket, type Ticket } from "./tickets.ts";
 
@@ -16,8 +17,14 @@ export interface TicketFile {
 export interface SprintSnapshot {
   dirName: string; // e.g. "01-mvp"
   number: string; // e.g. "01"
+  /** Folder is exactly `NN-cleanup` → cleanup sprint (spec §6.1). */
+  isCleanup: boolean;
   hasFocus: boolean;
   hasSpec: boolean;
+  /** First line of spec.md (trimmed), or null if the file is absent. Only
+   * cleanup derivation consumes it (the candidates stamp); reading it here
+   * keeps derivePhase IO-free, same split as visionStatusFirstLine. */
+  specFirstLine: string | null;
   /** Non-empty ux_test_plan.md exists in the sprint folder. */
   hasUxPlan: boolean;
   /** First line of ux_findings.md (trimmed), or null if the file is absent. */
@@ -71,11 +78,16 @@ export function readSprint(root: string, dirName: string): SprintSnapshot {
       }));
   }
   const findingsPath = join(dir, "ux_findings.md");
+  const specPath = join(dir, "spec.md");
   return {
     dirName,
     number: SPRINT_DIRNAME_RE.exec(dirName)![1]!,
+    isCleanup: CLEANUP_DIRNAME_RE.test(dirName),
     hasFocus: nonEmptyFile(join(dir, "sprint_focus.md")),
-    hasSpec: nonEmptyFile(join(dir, "spec.md")),
+    hasSpec: nonEmptyFile(specPath),
+    specFirstLine: existsSync(specPath)
+      ? (readFileSync(specPath, "utf8").split("\n")[0] ?? "").trim()
+      : null,
     hasUxPlan: nonEmptyFile(join(dir, "ux_test_plan.md")),
     uxFindingsFirstLine: existsSync(findingsPath)
       ? (readFileSync(findingsPath, "utf8").split("\n")[0] ?? "").trim()

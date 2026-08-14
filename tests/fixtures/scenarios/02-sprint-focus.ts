@@ -1,4 +1,5 @@
-// Canned step-2 agent. Modes via SCENARIO_FOCUS: ok (default) | badname | nothing
+// Canned step-2 agent. Modes via SCENARIO_FOCUS:
+//   ok (default) | badname | cleanup-slug (reserved NN-cleanup name) | nothing
 import fs from "node:fs";
 import path from "node:path";
 
@@ -10,6 +11,14 @@ if (mode === "badname") {
   const dir = ".working/sprints/01_BAD";
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "sprint_focus.md"), "# bad\n");
+  process.exit(0);
+}
+
+if (mode === "cleanup-slug") {
+  const num = /Create the folder `\.working\/sprints\/(\d{2})-/.exec(prompt)![1]!;
+  const dir = path.join(".working/sprints", `${num}-cleanup`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "sprint_focus.md"), "# cleanup\n");
   process.exit(0);
 }
 

@@ -4,11 +4,17 @@
  * anywhere in the control path.
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { CLEANUP_CADENCE } from "../config.ts";
+import { isCadenceCleanup } from "./cleanup.ts";
 import { BlockedError, LoopError } from "./errors.ts";
 import { derivePhase } from "./phases.ts";
 import { missingRequiredFiles } from "./scaffold.ts";
-import { readSnapshot } from "./snapshot.ts";
+import { readSnapshot, sprintsDir } from "./snapshot.ts";
 import {
+  stepCleanupIdentify,
+  stepCleanupTickets,
   stepImplement,
   stepReport,
   stepReview,
@@ -22,7 +28,12 @@ import {
   type Ctx,
 } from "./steps.ts";
 
-export async function run(ctx: Ctx, maxSprints: number): Promise<void> {
+export interface RunOptions {
+  maxSprints: number;
+  forceCleanup: boolean;
+}
+
+export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): Promise<void> {
   // Step 1 (spec §8.1): existence-only validation.
   const missing = missingRequiredFiles(ctx.root);
   if (missing.length > 0) {
@@ -38,6 +49,10 @@ export async function run(ctx: Ctx, maxSprints: number): Promise<void> {
   // that closes without re-running steps 6/7 (resume after a human unblock,
   // spec §10) still gets its stop conditions applied at the boundary below.
   let workedOnSprint: string | null = null;
+  // --cleanup applies to the first sprint *created* during the run (spec §5);
+  // consumed on use. Cadence stays purely number-derived, so a forced 02
+  // still yields a cadence 03.
+  let forceCleanupPending = forceCleanup;
 
   while (true) {
     const snapshot = readSnapshot(ctx.root);
@@ -58,7 +73,27 @@ export async function run(ctx: Ctx, maxSprints: number): Promise<void> {
           `[mmm-loop] sprint ${latest.number} complete (${completedThisRun}/${maxSprints} this run)`,
         );
       }
-      if (completedThisRun >= maxSprints) return;
+      if (completedThisRun >= maxSprints) {
+        if (forceCleanupPending) {
+          console.log("[mmm-loop] --cleanup had no effect: this run created no new sprint");
+        }
+        return;
+      }
+
+      // Cleanup sprint creation (spec §6.1): the orchestrator, not an agent,
+      // decides the type and creates the NN-cleanup folder, so the type is
+      // on disk from the first moment and resume can branch on it. No commit
+      // here — git can't track an empty dir; the first commit is C3's spec.
+      const wantCleanup =
+        forceCleanupPending || isCadenceCleanup(phase.sprintNumber, CLEANUP_CADENCE);
+      if (wantCleanup) {
+        forceCleanupPending = false;
+        mkdirSync(join(sprintsDir(ctx.root), `${phase.sprintNumber}-cleanup`), {
+          recursive: true,
+        });
+        console.log(`[mmm-loop] sprint ${phase.sprintNumber} will be a cleanup sprint`);
+        continue; // re-derive: lands on cleanup-identify
+      }
     }
 
     console.log(`[mmm-loop] phase: ${describe(phase)}`);
@@ -74,6 +109,14 @@ export async function run(ctx: Ctx, maxSprints: number): Promise<void> {
       case "tickets":
         workedOnSprint = phase.sprint.dirName;
         await stepTickets(ctx, phase.sprint);
+        break;
+      case "cleanup-identify":
+        workedOnSprint = phase.sprint.dirName;
+        await stepCleanupIdentify(ctx, phase.sprint);
+        break;
+      case "cleanup-tickets":
+        workedOnSprint = phase.sprint.dirName;
+        await stepCleanupTickets(ctx, phase.sprint, phase.category);
         break;
       case "implement":
         workedOnSprint = phase.sprint.dirName;
@@ -117,6 +160,10 @@ function describe(phase: ReturnType<typeof derivePhase>): string {
       return `step 3 — spec (sprint ${phase.sprint.number})`;
     case "tickets":
       return `step 4 — tickets (sprint ${phase.sprint.number})`;
+    case "cleanup-identify":
+      return `step C3 — identify cleanup candidates (sprint ${phase.sprint.number})`;
+    case "cleanup-tickets":
+      return `step C4 — cleanup ticket: ${phase.category} (sprint ${phase.sprint.number})`;
     case "implement":
       return `step 5.1 — implement ${phase.ticketFilename} (sprint ${phase.sprint.number})`;
     case "review":

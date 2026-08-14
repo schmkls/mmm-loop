@@ -112,6 +112,37 @@ describe("step 5.1 — implement", () => {
     expect(invocationText(p, invocations(p)[0]!)).toContain("USE THE BLUE KEY approach");
   });
 
+  test("cleanup sprint commit types: refactor/docs for category tickets; fix and ux unchanged", async () => {
+    const p = makeProject();
+    makeSprint(p, {
+      dirName: "01-cleanup",
+      focus: false,
+      specContent: "_Candidates: architecture=yes, clean-code=yes, docs=yes_\n\n# Cleanup\n",
+      tickets: {
+        "001-restructure.json": freshTicket("001"),
+        "001.1-fix-restructure.json": freshTicket("001.1"),
+        "002-simplify.json": freshTicket("002"),
+        "003-prune-docs.json": freshTicket("003"),
+        "004-ux-clearer-output.json": freshTicket("004"),
+      },
+    });
+    const expected: Record<string, string> = {
+      "001-restructure.json": "refactor(s01/001)",
+      "001.1-fix-restructure.json": "fix(s01/001.1)",
+      "002-simplify.json": "refactor(s01/002)",
+      "003-prune-docs.json": "docs(s01/003)",
+      "004-ux-clearer-output.json": "feat(s01/004)",
+    };
+    for (const [filename, prefix] of Object.entries(expected)) {
+      await withFakeClaude(p, {}, () =>
+        stepImplement(ctx(p), readSprint(p.root, "01-cleanup"), filename),
+      );
+      const t = readTicket(p, "01-cleanup", filename);
+      const subject = sh(p.root, "git", "show", "--no-patch", "--format=%s", t.commits[0]!).trim();
+      expect(subject).toStartWith(`${prefix}: `);
+    }
+  });
+
   test("multiple commits by the agent → all SHAs recorded", async () => {
     const p = makeProject();
     seedOpenTickets(p);

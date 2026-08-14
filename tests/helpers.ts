@@ -121,6 +121,9 @@ export interface SprintFiles {
   dirName?: string;
   focus?: boolean;
   spec?: boolean;
+  /** Verbatim spec.md content (e.g. a cleanup candidates stamp); overrides
+   * the generic default written when `spec` is not false. */
+  specContent?: string;
   /** filename → ticket. Omit for no tickets/ dir; {} for an empty one. */
   tickets?: Record<string, Ticket>;
   /** UX-pass state: plan writes ux_test_plan.md; findings "no"/"yes" map to
@@ -137,7 +140,9 @@ export function makeSprint(p: TestProject, files: SprintFiles = {}): string {
   if (files.focus !== false) {
     writeFileSync(join(dir, "sprint_focus.md"), "# Sprint — toy\n\n## What\nToy.\n\n## Why\nTest.\n");
   }
-  if (files.spec !== false) {
+  if (files.specContent !== undefined) {
+    writeFileSync(join(dir, "spec.md"), files.specContent);
+  } else if (files.spec !== false) {
     writeFileSync(join(dir, "spec.md"), "# Spec\n\n- Toy works.\n");
   }
   if (files.tickets !== undefined) {

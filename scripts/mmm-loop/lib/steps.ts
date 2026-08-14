@@ -7,6 +7,13 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runAgentStep } from "./agent.ts";
+import {
+  CLEANUP_CATEGORIES,
+  CLEANUP_DIRNAME_RE,
+  cleanupCommitType,
+  parseCandidatesStamp,
+  type CleanupCategory,
+} from "./cleanup.ts";
 import { gitCommitPaths, gitDiffOfCommits, gitHead, gitNewCommits, gitSummaries } from "./git.ts";
 import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "./phases.ts";
 import { readSprint, readTicketFile, sprintsDir, SPRINT_DIRNAME_RE, type SprintSnapshot } from "./snapshot.ts";
@@ -107,6 +114,8 @@ export async function stepSprintFocus(
         return `new sprint folder "${dirName}" does not match NN-kebab-case-slug (e.g. "${sprintNumber}-mvp")`;
       if (m[1] !== sprintNumber)
         return `new sprint folder "${dirName}" must be numbered ${sprintNumber}`;
+      if (CLEANUP_DIRNAME_RE.test(dirName))
+        return `"${dirName}" is reserved for cleanup sprints; pick a different slug`;
       const focus = join(sdir, dirName, "sprint_focus.md");
       if (!existsSync(focus) || statSync(focus).size === 0)
         return `expected a non-empty sprint_focus.md in .working/sprints/${dirName}/`;
@@ -174,6 +183,98 @@ export async function stepTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<voi
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} tickets`, [".working"]);
 }
 
+// ---------------------------------------------------------------- step C3
+
+export async function stepCleanupIdentify(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
+  const specPath = join(sprintsDir(ctx.root), sprint.dirName, "spec.md");
+  await runAgentStep({
+    stepId: "03-cleanup-identify",
+    cwd: ctx.root,
+    bundleDir: ctx.bundleDir,
+    vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
+    check: () => {
+      if (!existsSync(specPath) || statSync(specPath).size === 0)
+        return `expected a non-empty spec.md at ${relSprintDir(sprint)}/spec.md`;
+      const firstLine = (readFileSync(specPath, "utf8").split("\n")[0] ?? "").trim();
+      if (!parseCandidatesStamp(firstLine))
+        return (
+          `expected the first line of ${relSprintDir(sprint)}/spec.md to be exactly the candidates stamp ` +
+          `"_Candidates: architecture=<yes|none>, clean-code=<yes|none>, docs=<yes|none>_" ` +
+          `(e.g. "_Candidates: architecture=yes, clean-code=none, docs=yes_"), got "${firstLine}"`
+        );
+      return null;
+    },
+  });
+  await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} spec`, [".working"]);
+}
+
+// ---------------------------------------------------------------- step C4
+
+/** One invocation per yes-category; the outer derive→run→re-derive cycle
+ * produces the sequential category-order runs — no internal loop. Unlike
+ * step 4 there is no contiguity check: skipped categories leave ID gaps. */
+export async function stepCleanupTickets(
+  ctx: Ctx,
+  sprint: SprintSnapshot,
+  categoryKey: CleanupCategory,
+): Promise<void> {
+  const category = CLEANUP_CATEGORIES.find((c) => c.key === categoryKey)!;
+  const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
+  const beforeFiles = new Map<string, string>(
+    listDir(ticketsDir).map((f) => [f, readFileSync(join(ticketsDir, f), "utf8")]),
+  );
+  const filenameRe = new RegExp(`^${category.ticketId}-[a-z0-9-]+\\.json$`);
+
+  await runAgentStep({
+    stepId: "04-cleanup-tickets",
+    cwd: ctx.root,
+    bundleDir: ctx.bundleDir,
+    vars: {
+      sprintDir: relSprintDir(sprint),
+      sprintNumber: sprint.number,
+      category: category.key,
+      ticketId: category.ticketId,
+    },
+    check: () => {
+      const created = listDir(ticketsDir).filter((f) => !beforeFiles.has(f));
+      const errors: string[] = [];
+      if (created.length !== 1) {
+        errors.push(
+          `expected exactly one new ticket file ${category.ticketId}-<kebab-slug>.json in ` +
+            `${relSprintDir(sprint)}/tickets/, found ${created.length}` +
+            (created.length > 0 ? ` (${created.join(", ")})` : ""),
+        );
+      } else {
+        const filename = created[0]!;
+        if (!filenameRe.test(filename)) {
+          errors.push(
+            `${filename}: the ${category.key} ticket must be named ${category.ticketId}-<kebab-slug>.json — its id is fixed`,
+          );
+        } else {
+          const { ticket, error } = checkTicketFile(join(ticketsDir, filename), filename);
+          if (error) errors.push(error);
+          else errors.push(...initialValueErrors(ticket!, filename));
+        }
+      }
+      for (const [filename, contentBefore] of beforeFiles) {
+        const path = join(ticketsDir, filename);
+        if (!existsSync(path)) {
+          errors.push(`${filename} was deleted; ticketizing must not delete tickets`);
+        } else if (readFileSync(path, "utf8") !== contentBefore) {
+          errors.push(`${filename} was modified; ticketizing must not modify existing tickets`);
+        }
+      }
+      return errors.length > 0 ? errors.join("\n") : null;
+    },
+  });
+
+  await gitCommitPaths(
+    ctx.root,
+    `chore(loop): sprint ${sprint.number} tickets (${category.key})`,
+    [".working"],
+  );
+}
+
 // ---------------------------------------------------------------- step 5.1
 
 export async function stepImplement(
@@ -187,7 +288,14 @@ export async function stepImplement(
   const before = readTicketFile(ticketPath, ticketFilename);
   const headBefore = await gitHead(ctx.root);
 
-  const commitType = isFixTicketId(before.id) ? "fix" : "feat";
+  // Cleanup category tickets commit as refactor/docs (spec §6.4); fix
+  // tickets keep `fix`, and UX tickets keep `feat` even on cleanup sprints —
+  // a UX fix is not cleanup.
+  const commitType = isFixTicketId(before.id)
+    ? "fix"
+    : sprint.isCleanup && !UX_TICKET_FILENAME_RE.test(ticketFilename)
+      ? cleanupCommitType(before.id)
+      : "feat";
   const commitFormat = `${commitType}(s${sprint.number}/${before.id}): <short description>`;
 
   const humanNoteSection = before.human_note
@@ -464,12 +572,13 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
   });
 
   // Orchestrator-owned: flip the findings stamp (spec §8.5.3) and commit it
-  // together with the new tickets.
+  // together with the new tickets. A zero-candidate cleanup sprint reaches
+  // this step with no tickets/ dir at all — git rejects missing pathspecs.
   const lines = readFileSync(findingsPath, "utf8").split("\n");
   lines[0] = UX_TICKETIZED_YES;
   writeFileSync(findingsPath, lines.join("\n"));
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux tickets`, [
-    join(relSprintDir(sprint), "tickets"),
+    ...(existsSync(ticketsDir) ? [join(relSprintDir(sprint), "tickets")] : []),
     relFindingsPath,
     join(".working", "learnings.md"),
   ]);
@@ -499,6 +608,19 @@ export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void
         `- sprint ${sprint.number}, ticket ${ticket.id} "${ticket.title}": ${ticket.needs_human_intervention_reason}`,
     );
 
+  // Always-filled var (fillTemplate fails loudly otherwise) — same pattern
+  // as humanNoteSection in stepImplement.
+  const sprintTypeSection = sprint.isCleanup
+    ? `\n## Cleanup sprint\n\nSprint ${sprint.number} was a cleanup sprint: there is no ` +
+      `sprint_focus.md — the spec's candidates and their tickets are the whole story. ` +
+      `Summarize the improvements made (architecture / clean code / docs) instead of feature work.` +
+      ((current.tickets ?? []).length === 0
+        ? ` This sprint has zero tickets: identification found nothing worth cleaning — the ` +
+          `section must state exactly that; it IS the summary.`
+        : "") +
+      `\n`
+    : "";
+
   await runAgentStep({
     stepId: "06-report",
     cwd: ctx.root,
@@ -509,6 +631,7 @@ export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void
       reportPath: REPORT_REL,
       commitSummaries,
       blockedTickets: blocked.length > 0 ? blocked.join("\n") : "(none)",
+      sprintTypeSection,
     },
     check: () => {
       if (!existsSync(reportPath)) return `expected ${REPORT_REL} to exist`;

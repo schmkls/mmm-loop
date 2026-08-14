@@ -7,7 +7,9 @@
 export type StepId =
   | "02-sprint-focus"
   | "03-spec"
+  | "03-cleanup-identify"
   | "04-tickets"
+  | "04-cleanup-tickets"
   | "05-implement"
   | "05-review"
   | "05.5-ux-plan"
@@ -32,7 +34,9 @@ export interface StepConfig {
 export const STEP_CONFIG: Record<StepId, StepConfig> = {
   "02-sprint-focus": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
   "03-spec": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
+  "03-cleanup-identify": { model: "claude-fable-5", effort: "extra", maxTurns: 75 },
   "04-tickets": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
+  "04-cleanup-tickets": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
   "05-implement": { model: "claude-fable-5", effort: "extra", maxTurns: 150 },
   "05-review": { model: "claude-fable-5", effort: "extra", maxTurns: 75 },
   "05.5-ux-plan": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
@@ -41,6 +45,12 @@ export const STEP_CONFIG: Record<StepId, StepConfig> = {
   "06-report": { model: "claude-fable-5", effort: "default", maxTurns: 75 },
   "07-vision-status": { model: "claude-haiku-4-5", effort: "default", maxTurns: 30 },
 };
+
+/**
+ * Every Nth *created* sprint is a cleanup sprint (spec §5; the spec calls
+ * this `cleanupCadence`). Default 3 = sprints 03, 06, 09, …; 0 = disabled.
+ */
+export const CLEANUP_CADENCE = 3;
 
 /**
  * Autonomous means autonomous (spec §7). If that is too spicy for a given

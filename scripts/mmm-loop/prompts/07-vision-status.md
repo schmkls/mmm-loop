@@ -44,6 +44,9 @@ Rules:
   (`tests[].passes: true`); everything else is a gap.
 - Unresolved UX findings (not ticketized, or ticketized but blocked) belong
   under "Known gaps".
+- Cleanup sprints (folder `NN-cleanup`, no sprint_focus.md) do not advance
+  the vision — the content usually carries over, but the stamp must still be
+  updated.
 - "Blocked on human" lists tickets with `needs_human_intervention: true` and
   their reasons — or "Nothing.".
 

@@ -24,8 +24,10 @@ function sprint(dirName: string, o: Partial<SprintSnapshot> = {}): SprintSnapsho
   return {
     dirName,
     number: dirName.slice(0, 2),
+    isCleanup: /^\d{2}-cleanup$/.test(dirName),
     hasFocus: true,
     hasSpec: true,
+    specFirstLine: "# Spec",
     hasUxPlan: false,
     uxFindingsFirstLine: null,
     tickets: null,
@@ -269,6 +271,143 @@ describe("derivePhase — step 5.5 UX rows (spec §8.5.3)", () => {
       ],
     });
     expect(derivePhase(snap([s]))).toMatchObject({ step: "ux-plan" });
+  });
+});
+
+describe("derivePhase — cleanup sprints (spec §6.1 cleanup rows)", () => {
+  const stamp = (a: string, c: string, d: string) =>
+    `_Candidates: architecture=${a}, clean-code=${c}, docs=${d}_`;
+
+  /** A cleanup sprint has no sprint_focus.md; the folder name is the focus. */
+  function cleanup(o: Partial<SprintSnapshot> = {}): SprintSnapshot {
+    return sprint("03-cleanup", {
+      hasFocus: false,
+      specFirstLine: stamp("yes", "yes", "yes"),
+      ...o,
+    });
+  }
+
+  test("no spec.md → step C3 (identify), never sprint-focus despite hasFocus false", () => {
+    const s = cleanup({ hasSpec: false, specFirstLine: null });
+    expect(derivePhase(snap([s]))).toEqual({ step: "cleanup-identify", sprint: s });
+  });
+
+  test("malformed stamp → step C3 again (failed postcondition), not a throw", () => {
+    for (const firstLine of [
+      "# Cleanup spec",
+      "_Candidates: architecture=yes_",
+      "_Candidates: clean-code=yes, architecture=yes, docs=yes_",
+      stamp("yes", "maybe", "none"),
+    ]) {
+      const s = cleanup({ specFirstLine: firstLine });
+      expect(derivePhase(snap([s]))).toEqual({ step: "cleanup-identify", sprint: s });
+    }
+  });
+
+  test("yes-category without its ticket → step C4 for the first missing, in ID order", () => {
+    const noTickets = cleanup({ tickets: [] });
+    expect(derivePhase(snap([noTickets]))).toMatchObject({
+      step: "cleanup-tickets",
+      category: "architecture",
+    });
+
+    // Gap case: only 002- exists → architecture (001) is the first missing.
+    const gap = cleanup({ tickets: [tf("002-simplify.json")] });
+    expect(derivePhase(snap([gap]))).toMatchObject({
+      step: "cleanup-tickets",
+      category: "architecture",
+    });
+
+    const archDone = cleanup({ tickets: [tf("001-restructure.json")] });
+    expect(derivePhase(snap([archDone]))).toMatchObject({
+      step: "cleanup-tickets",
+      category: "clean-code",
+    });
+  });
+
+  test("a fix ticket (001.1-) does not satisfy its parent category", () => {
+    const s = cleanup({
+      specFirstLine: stamp("yes", "none", "none"),
+      tickets: [tf("001.1-fix.json")],
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({
+      step: "cleanup-tickets",
+      category: "architecture",
+    });
+  });
+
+  test("skipped categories leave gaps: docs-only stamp needs only 003-", () => {
+    const missing = cleanup({ specFirstLine: stamp("none", "none", "yes"), tickets: [] });
+    expect(derivePhase(snap([missing]))).toMatchObject({
+      step: "cleanup-tickets",
+      category: "docs",
+    });
+
+    const present = cleanup({
+      specFirstLine: stamp("none", "none", "yes"),
+      tickets: [tf("003-prune-docs.json")],
+    });
+    expect(derivePhase(snap([present]))).toMatchObject({
+      step: "implement",
+      ticketFilename: "003-prune-docs.json",
+    });
+  });
+
+  test("all candidate tickets exist → normal ticket walk (implement/review)", () => {
+    const open = cleanup({
+      specFirstLine: stamp("yes", "none", "none"),
+      tickets: [tf("001-restructure.json")],
+    });
+    expect(derivePhase(snap([open]))).toMatchObject({
+      step: "implement",
+      ticketFilename: "001-restructure.json",
+    });
+
+    const unreviewed = cleanup({
+      specFirstLine: stamp("yes", "none", "none"),
+      tickets: [tf("001-restructure.json", { done: true })],
+    });
+    expect(derivePhase(snap([unreviewed]))).toMatchObject({
+      step: "review",
+      ticketFilename: "001-restructure.json",
+    });
+  });
+
+  test("all candidate tickets closed → shared tail: UX pass first, then report", () => {
+    const s = cleanup({
+      specFirstLine: stamp("yes", "none", "none"),
+      tickets: [tf("001-restructure.json", { done: true, reviewed: true })],
+    });
+    expect(derivePhase(snap([s]))).toMatchObject({ step: "ux-plan" });
+    expect(derivePhase(snap([{ ...s, ...uxDone }]))).toMatchObject({ step: "report" });
+  });
+
+  test("all-none stamp with zero tickets → UX pass (runs even on empty sprints)", () => {
+    const s = cleanup({ specFirstLine: stamp("none", "none", "none"), tickets: [] });
+    expect(derivePhase(snap([s]))).toMatchObject({ step: "ux-plan" });
+  });
+
+  test("report section present but stale vision stamp → step 7", () => {
+    const s = cleanup({ specFirstLine: stamp("none", "none", "none"), tickets: [], ...uxDone });
+    const phase = derivePhase(
+      snap([s], { report: '<section id="sprint-03">…</section>', visionLine: "_Last updated: sprint 02_" }),
+    );
+    expect(phase.step).toBe("vision-status");
+  });
+
+  test("fully complete cleanup sprint → step 2, new sprint NN+1", () => {
+    const s = cleanup({
+      specFirstLine: stamp("yes", "none", "none"),
+      tickets: [tf("001-restructure.json", { done: true, reviewed: true })],
+      ...uxDone,
+    });
+    const phase = derivePhase(
+      snap([sprint("01-a"), sprint("02-b"), s], {
+        report: '<section id="sprint-03">…</section>',
+        visionLine: "_Last updated: sprint 03_",
+      }),
+    );
+    expect(phase).toEqual({ step: "sprint-focus", sprintNumber: "04", reuseDirName: null });
   });
 });
 

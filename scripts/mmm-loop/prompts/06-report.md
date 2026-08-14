@@ -22,7 +22,7 @@ contains exactly one up-to-date section for sprint {{sprintNumber}}.
 ```
 {{blockedTickets}}
 ```
-
+{{sprintTypeSection}}
 ## Required structure
 
 - ONE file, fully self-contained: inline CSS and JS only, no external

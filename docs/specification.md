@@ -72,7 +72,9 @@ scripts/mmm-loop/
   prompts/
     02-sprint-focus.md
     03-spec.md
+    03-cleanup-identify.md
     04-tickets.md
+    04-cleanup-tickets.md
     05-implement.md
     05-review.md
     05.5-ux-plan.md
@@ -108,6 +110,9 @@ docs/
 
 - Sprint folders: `NN-slug` — two-digit zero-padded number + kebab-case slug,
   so lexical sort equals numeric sort. `NN` = existing sprint folder count + 1.
+  A **cleanup sprint** (§8.8) is exactly `NN-cleanup` and has no
+  `sprint_focus.md` — the folder name is the focus; `cleanup` is therefore a
+  reserved slug for normal sprints (§6.1).
 - Ticket files: `NNN-slug.json` (three-digit). Execution order = filename
   order. Fix tickets are `NNN.1-slug.json`, which sorts directly after the
   parent (`003-x.json` < `003.1-fix-x.json` < `004-y.json`); the filename
@@ -126,12 +131,30 @@ existing file. Creates:
 - `.working/vision_status.md` (template from §8.7, stating nothing is built yet)
 - `.working/learnings.md` (empty with a one-line header)
 
-### `run [--max-sprints N]`
+### `run [--max-sprints N] [--cleanup]`
 
 Runs the loop. Default `--max-sprints 1`: one full sprint, then exit. Higher
 values chain sprints (e.g. `--max-sprints 3` for an overnight run) — but a
 sprint that ends with blocked tickets always halts the run (§9), regardless of
 sprints remaining.
+
+Two independent triggers make a newly *created* sprint a **cleanup sprint**
+(§8.8):
+
+- **Flag**: `--cleanup` forces the first sprint created during the run. If
+  the run only resumes and finishes an in-progress sprint without creating a
+  new one, the flag has no effect and the orchestrator prints a notice saying
+  so. (On a blocked exit-2 run the notice is skipped — state is derivable;
+  just pass the flag again.) Subsequent sprints in the same run follow the
+  cadence rule.
+- **Cadence**: `CLEANUP_CADENCE` in `config.ts` (the spec name is
+  `cleanupCadence`; default `3`, `0` = disabled). A newly created sprint `NN`
+  is a cleanup sprint iff `NN % cadence === 0` — stateless, derivable from
+  the sprint number alone. The default gives sprints 03, 06, 09, …
+
+`--cleanup` wins over cadence for the sprint it applies to. The two can
+produce consecutive cleanup sprints (e.g. 02 forced, 03 by cadence); that is
+accepted, not prevented — a forced cleanup does not reset the cadence.
 
 ### Exit codes
 
@@ -172,6 +195,33 @@ still count as complete, and a pre-feature sprint that crashed between steps
 6 and 7 resumes at step 7, not 5.5. A `ux_findings.md` whose first line is
 neither stamp value exactly is malformed state → exit 1.
 
+**Cleanup sprints** (§8.8): a latest sprint whose folder matches
+`^\d{2}-cleanup$` derives through its own head rows, then joins the shared
+tail above (ticket walk → UX rows → report → vision status → next sprint)
+unchanged:
+
+| Observed state | Next phase |
+|---|---|
+| No `spec.md` | step C3 (identify) |
+| `spec.md` first line is not a valid candidates stamp | step C3 again — a failed C3 postcondition (retry policy §6.3), never a derivation crash |
+| Stamp has `yes` categories whose ticket ID is missing from `tickets/` | step C4 for the first missing category, in ID order |
+| All candidate tickets exist (or the stamp is all-`none`) | the shared tail rows, unchanged — an all-`none` sprint lands on the UX rows with zero tickets |
+
+A "missing category" check matches on ticket-ID prefix (`^001-`, `^002-`,
+`^003-`); fix tickets (`001.1-...`) cannot exist before their parent, and UX
+tickets are numbered after the highest existing ID, so neither confuses it.
+Cleanup sprints have no `sprint_focus.md` — the folder name is the focus —
+and `cleanup` is a **reserved slug**: the step-2 postcondition rejects a new
+normal-sprint folder named exactly `NN-cleanup`.
+
+The sprint-creation decision lives where new-sprint numbering already lives:
+when derivation lands on "new sprint", the orchestrator applies flag/cadence
+(§5) to decide the type, and for cleanup creates the `NN-cleanup` folder
+itself before any agent runs — the type is on disk from the first moment.
+The folder creation is uncommitted (git cannot track an empty directory);
+resume safety comes from the directory listing, and the first cleanup commit
+is C3's spec commit.
+
 Deterministic markers used above:
 
 - **Report**: step 6 must produce exactly one `<section id="sprint-NN">` per
@@ -207,10 +257,15 @@ repeated failure means the prompt or state is wrong, and a human should look.
   step: `chore(loop): sprint NN focus`, `chore(loop): sprint NN spec`,
   `chore(loop): sprint NN tickets`, ticket-status updates,
   `chore(loop): sprint NN ux plan`, `... ux findings`, `... ux tickets` (the
-  tickets commit includes the stamp flip), report, vision status.
+  tickets commit includes the stamp flip), report, vision status. On cleanup
+  sprints, step C4's per-category commits are
+  `chore(loop): sprint NN tickets (<category>)` — up to three, greppable.
 - The **implement agent** commits code, with the ticket ID in every message:
   `feat(sNN/TTT): <title>` (or `fix(sNN/TTT.1): ...` for fix tickets) — so
-  commits ↔ tickets are greppable.
+  commits ↔ tickets are greppable. On cleanup sprints the three category
+  tickets commit as `refactor(sNN/001|002)` / `docs(sNN/003)` instead of
+  `feat`; fix tickets keep `fix`, and UX tickets keep `feat` even there — a
+  UX fix is not cleanup.
 - After each implement run, the orchestrator records the new commit SHAs
   (`git rev-list` of before-HEAD..after-HEAD) into the ticket's `commits`
   array. The review step diffs exactly those commits — not "the last commit".
@@ -236,7 +291,9 @@ claude -p --dangerously-skip-permissions --model <model> --max-turns <n> < fille
 |------|-----------------|--------|---------------------|
 | 2 sprint focus | `claude-fable-5` | highest available ("extra") | 50 |
 | 3 spec | `claude-fable-5` | extra | 50 |
+| C3 cleanup identify | `claude-fable-5` | extra | 75 (exploration-heavy) |
 | 4 tickets | `claude-fable-5` | extra | 50 |
+| C4 cleanup ticketize | `claude-fable-5` | extra | 50 |
 | 5.1 implement | `claude-fable-5` | extra | 150 |
 | 5.2 review | `claude-fable-5` | extra | 75 |
 | 5.5.1 ux plan | `claude-fable-5` | extra | 50 |
@@ -505,6 +562,104 @@ _Last updated: sprint NN_
   under "Known gaps".
 - **Postcondition**: first line stamps the current sprint number.
 
+### 8.8 Cleanup sprints — steps C3 and C4
+
+A second sprint type: instead of advancing the vision, a **cleanup sprint**
+finds and executes the most obvious improvement in each of three categories —
+architecture, clean code, docs — reusing the existing
+ticket/implement/review/UX/report machinery unchanged. Why: debt accretes by
+construction (review is diff-scoped, so cross-cutting drift is invisible to
+it), and the loop eats its own docs — stale `docs/` compounds into worse
+sprint focus. It is a sprint *type*, not a step, so it costs nothing when not
+triggered. The bar is deliberately high: LLM-initiated "improvements" churn
+easily, so candidates must be obvious, certain, single-ticket-feasible wins —
+**finding nothing is a valid, successful outcome**, and an empty sprint is
+cheap. Triggering and scheduling live in §5; on-disk representation and
+derivation in §6.1. Steps C3/C4 replace steps 2–4; everything from the
+implement loop on runs unchanged.
+
+#### C3 — Identify candidates (agent; replaces steps 2–3)
+
+- **Categories**:
+  1. **architecture** — structural improvement of the codebase.
+  2. **clean-code** — readability/simplification/duplication in code.
+  3. **docs** — any project documentation: `README`, `docs/`,
+     `docs/CONTEXT.md`, `.working/learnings.md` (pruning/dedup), inline code
+     docs. **`docs/vision.md` is off-limits** — human-authored north star,
+     never edited by the loop (read-only input for relevance judgment).
+- **At most one candidate per category.** A candidate must be an obvious,
+  certain win — feasible as a single ticket and relevant to the project's
+  current state. If nothing clears the bar, the category is skipped; the
+  prompt states explicitly that skipping is the expected outcome for a
+  healthy area.
+- **Inputs**: `docs/CONTEXT.md`, `docs/vision.md` (read-only),
+  `.working/vision_status.md`, `.working/learnings.md`, free exploration of
+  the codebase and recent sprint folders (blocked-ticket reasons are a
+  strong signal of problem areas).
+- **Output**: `spec.md` in the sprint folder. Its **first line** is a
+  machine-readable candidates stamp (same idiom as the vision-status stamp):
+
+  ```
+  _Candidates: architecture=yes, clean-code=none, docs=yes_
+  ```
+
+  Exact format: the three keys in that order, each valued `yes` or `none`.
+  The body must contain a section per `yes` category describing: what the
+  improvement is, which files it touches, why it is a clear win, and why it
+  fits in one ticket.
+- **Postcondition**: `spec.md` exists; first line parses as the stamp. (The
+  stamp is the contract; body content is the prompt's job.)
+- Committed as `chore(loop): sprint NN spec`, like step 3.
+
+#### C4 — Ticketize (agents; replaces step 4)
+
+One agent invocation **per `yes` category**, run sequentially in category
+order (the outer derive→run→re-derive cycle produces the sequence). Each
+produces exactly one ticket with a **fixed ID per category**:
+
+| Category | Ticket ID | Runs |
+|---|---|---|
+| architecture | `001` | first |
+| clean-code | `002` | second |
+| docs | `003` | last |
+
+Structural change first; docs last, so they document the post-cleanup state.
+Absent categories simply leave a gap in the IDs — the ticket walk is
+filename-ordered and does not assume contiguity, so C4's postcondition
+deliberately has no contiguity check (unlike step 4's).
+
+- **Inputs**: `spec.md` (its category's section), `docs/CONTEXT.md`,
+  `.working/learnings.md`.
+- **Output**: `tickets/NNN-slug.json`, existing schema (§8.4) unchanged.
+  Tests for refactor tickets include "all existing tests still pass"; tests
+  for docs tickets are concrete checks ("statement X in README matches
+  actual CLI behavior").
+- **Postcondition** (per invocation): exactly one new ticket file with the
+  category's fixed ID exists, parses, passes schema validation; existing
+  files untouched.
+- **Zero `yes` categories** → C4 does not run at all; the sprint proceeds
+  down the shared tail with empty `tickets/`: the UX pass (§8.5.3) runs as
+  usual — with no delta it concludes "nothing to test" quickly — then the
+  report. Quick but not free, by choice: skipping would special-case the
+  tail.
+
+#### Unchanged machinery, small deltas
+
+- **Implement + review loop (§8.5)**: unchanged, including fix tickets and
+  their hard bounds. Commit-type delta per §6.4.
+- **UX testing (§8.5.3)**: runs unchanged — no special-casing, not even for
+  zero-candidate sprints. Cleanup must not change behavior, so the UX pass
+  doubles as a regression check on that promise.
+- **Report (§8.6)**: unchanged postcondition. The prompt receives a
+  sprint-type section: for cleanup sprints, summarize improvements instead
+  of feature work; for a zero-candidate sprint the section states that
+  identification found nothing worth cleaning — that *is* the summary.
+- **Vision status (§8.7)**: runs unchanged. Content mostly carries over
+  (cleanup doesn't advance the vision), but the stamp is still required —
+  derivation's completeness check depends on it.
+- **Outer loop, stop conditions, exit codes (§5, §9)**: unchanged. Blocked
+  cleanup tickets → exit 2 like any others.
+
 ## 9. Outer loop and stop conditions
 
 After step 7:
@@ -551,3 +706,6 @@ review prompt. Ralph's highest-value trick, adopted wholesale.
 - `--continue-on-blocked` flag
 - Dependency graphs between tickets (order stays linear)
 - Orchestrator-run test commands (deliberately rejected — self-report chosen)
+- More than one cleanup candidate per category; per-category cadences
+- Cross-sprint cleanup memory ("we deferred X last time") beyond what
+  `.working/learnings.md` already provides
