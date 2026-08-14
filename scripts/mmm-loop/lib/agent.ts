@@ -35,7 +35,45 @@ export interface AgentStep {
   bundleDir: string;
 }
 
-async function spawnClaude(step: AgentStep, prompt: string): Promise<string | null> {
+/** How much of each output stream is kept for classification (spec §2.1). */
+const TAIL_MAX_BYTES = 64 * 1024;
+
+/** Bounded last-N-bytes buffer for one output stream. */
+class Tail {
+  #buf = new Uint8Array(0);
+  push(chunk: Uint8Array): void {
+    const total = this.#buf.byteLength + chunk.byteLength;
+    const merged = new Uint8Array(total);
+    merged.set(this.#buf);
+    merged.set(chunk, this.#buf.byteLength);
+    this.#buf = total > TAIL_MAX_BYTES ? merged.slice(total - TAIL_MAX_BYTES) : merged;
+  }
+  text(): string {
+    return new TextDecoder().decode(this.#buf);
+  }
+}
+
+/** Tee one child stream through to our own, live, keeping the bounded tail. */
+async function pump(
+  stream: ReadableStream<Uint8Array<ArrayBuffer>>,
+  sink: typeof Bun.stdout,
+  tail: Tail,
+): Promise<void> {
+  for await (const chunk of stream) {
+    await Bun.write(sink, chunk);
+    tail.push(chunk);
+  }
+}
+
+interface SpawnResult {
+  /** null on exit 0, otherwise the human-readable failure line. */
+  failure: string | null;
+  /** Last 64 KB of stdout + last 64 KB of stderr, for classification only. */
+  outputTail: string;
+  exitCode: number;
+}
+
+async function spawnClaude(step: AgentStep, prompt: string): Promise<SpawnResult> {
   const cfg = STEP_CONFIG[step.stepId];
   const argv = [
     claudeBin(),
@@ -53,25 +91,38 @@ async function spawnClaude(step: AgentStep, prompt: string): Promise<string | nu
     // to process.env (e.g. MMM_LOOP_CLAUDE_BIN in tests) would not propagate.
     env: process.env,
     stdin: new TextEncoder().encode(prompt),
-    stdout: "inherit",
-    stderr: "inherit",
+    // Piped-and-teed (spec §2.1): same bytes, same interleaving, streamed
+    // live — but the orchestrator keeps a tail for rate-limit classification.
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const exitCode = await proc.exited;
-  return exitCode === 0 ? null : `\`${claudeBin()}\` exited with code ${exitCode}`;
+  const outTail = new Tail();
+  const errTail = new Tail();
+  // Await the pumps AND the exit: the tail must not miss the final lines.
+  const [, , exitCode] = await Promise.all([
+    pump(proc.stdout, Bun.stdout, outTail),
+    pump(proc.stderr, Bun.stderr, errTail),
+    proc.exited,
+  ]);
+  return {
+    failure: exitCode === 0 ? null : `\`${claudeBin()}\` exited with code ${exitCode}`,
+    outputTail: `${outTail.text()}\n${errTail.text()}`,
+    exitCode,
+  };
 }
 
 export async function runAgentStep(step: AgentStep): Promise<void> {
   const template = readFileSync(join(step.bundleDir, "prompts", `${step.stepId}.md`), "utf8");
   const prompt = fillTemplate(template, step.vars);
 
-  let failure = (await spawnClaude(step, prompt)) ?? (await step.check());
+  let failure = (await spawnClaude(step, prompt)).failure ?? (await step.check());
   if (failure === null) return;
 
   console.error(`[mmm-loop] step ${step.stepId} failed postcondition, retrying once: ${failure}`);
   const retryPrompt =
     prompt +
     `\n\n## PREVIOUS ATTEMPT FAILED\n\nA previous run of this step did not produce the expected output:\n\n${failure}\n\nCorrect this now. Produce exactly the expected output described above.`;
-  failure = (await spawnClaude(step, retryPrompt)) ?? (await step.check());
+  failure = (await spawnClaude(step, retryPrompt)).failure ?? (await step.check());
   if (failure !== null) {
     throw new LoopError(
       `Step ${step.stepId} failed its postcondition twice. Last failure:\n${failure}\n` +
