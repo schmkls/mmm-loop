@@ -4,25 +4,41 @@
  * lets the orchestrator commit the resulting loop artifacts (spec §6.4).
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runAgentStep } from "./agent.ts";
-import {
-  CLEANUP_CATEGORIES,
-  CLEANUP_DIRNAME_RE,
-  cleanupCommitType,
-  parseCandidatesStamp,
-  type CleanupCategory,
-} from "./cleanup.ts";
+import { CLEANUP_CATEGORIES, cleanupCommitType, type CleanupCategory } from "./cleanup.ts";
 import { gitCommitPaths, gitDiffOfCommits, gitHead, gitNewCommits, gitSummaries } from "./git.ts";
 import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "./phases.ts";
-import { readSprint, readTicketFile, sprintsDir, SPRINT_DIRNAME_RE, type SprintSnapshot } from "./snapshot.ts";
 import {
-  INITIAL_TICKET_FILENAME_RE,
+  checkCandidatesStamp,
+  checkCleanupTickets,
+  checkImplement,
+  checkInitialTickets,
+  checkNonEmpty,
+  checkReport,
+  checkReview,
+  checkSprintFocus,
+  checkStamped,
+  checkUxTickets,
+  checkVisionStatus,
+} from "./postconditions.ts";
+import {
+  listDir,
+  nonEmptyFile,
+  readDirFiles,
+  readRequiredTextFile,
+  readSprint,
+  readTextFile,
+  readTicketFile,
+  sprintsDir,
+  type SprintSnapshot,
+} from "./snapshot.ts";
+import {
+  hasFixTicketFor,
   isFixTicketId,
-  TICKET_FILENAME_RE,
+  nextTicketNumber,
   UX_TICKET_FILENAME_RE,
-  validateTicket,
   type Ticket,
 } from "./tickets.ts";
 
@@ -33,46 +49,12 @@ export interface Ctx {
 
 const REPORT_REL = join("docs", "sprint_reports.html");
 
-function listDir(path: string): string[] {
-  return existsSync(path) ? readdirSync(path).sort() : [];
-}
-
 function relSprintDir(sprint: { dirName: string }): string {
   return join(".working", "sprints", sprint.dirName);
 }
 
 function writeTicket(path: string, ticket: Ticket): void {
   writeFileSync(path, JSON.stringify(ticket, null, 2) + "\n");
-}
-
-/** Parse + schema-validate, returning an error string instead of throwing —
- * postconditions report, the retry policy decides. */
-function checkTicketFile(path: string, filename: string): { ticket?: Ticket; error?: string } {
-  if (!existsSync(path)) return { error: `expected ticket file ${filename} to exist` };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
-  } catch (e) {
-    return { error: `${filename} is not valid JSON: ${(e as Error).message}` };
-  }
-  const errors = validateTicket(parsed, filename);
-  if (errors.length > 0) return { error: errors.join("\n") };
-  return { ticket: parsed as Ticket };
-}
-
-function initialValueErrors(t: Ticket, filename: string): string[] {
-  const errors: string[] = [];
-  if (t.done) errors.push(`${filename}: "done" must start as false`);
-  if (t.reviewed) errors.push(`${filename}: "reviewed" must start as false`);
-  if (t.needs_human_intervention)
-    errors.push(`${filename}: "needs_human_intervention" must start as false`);
-  if (t.needs_human_intervention_reason !== null)
-    errors.push(`${filename}: "needs_human_intervention_reason" must start as null`);
-  if (t.human_note !== null) errors.push(`${filename}: "human_note" must start as null`);
-  if (t.commits.length > 0) errors.push(`${filename}: "commits" must start empty`);
-  if (t.tests.some((test) => test.passes))
-    errors.push(`${filename}: every "tests[].passes" must start as false`);
-  return errors;
 }
 
 // ---------------------------------------------------------------- step 2
@@ -98,30 +80,15 @@ export async function stepSprintFocus(
     bundleDir: ctx.bundleDir,
     vars: { sprintNumber, folderInstruction },
     check: () => {
-      if (reuseDirName) {
-        const extra = listDir(sdir).filter((d) => !before.includes(d));
-        if (extra.length > 0)
-          return `expected the existing folder ${reuseDirName} to be reused, but new entries appeared in .working/sprints/: ${extra.join(", ")}`;
-        const focus = join(sdir, reuseDirName, "sprint_focus.md");
-        if (!existsSync(focus) || statSync(focus).size === 0)
-          return `expected a non-empty sprint_focus.md in .working/sprints/${reuseDirName}/`;
-        return null;
-      }
-      const created = listDir(sdir).filter((d) => !before.includes(d));
-      if (created.length !== 1)
-        return `expected exactly one new sprint folder in .working/sprints/, found ${created.length} (${created.join(", ") || "none"})`;
-      const dirName = created[0]!;
-      const m = SPRINT_DIRNAME_RE.exec(dirName);
-      if (!m)
-        return `new sprint folder "${dirName}" does not match NN-kebab-case-slug (e.g. "${sprintNumber}-mvp")`;
-      if (m[1] !== sprintNumber)
-        return `new sprint folder "${dirName}" must be numbered ${sprintNumber}`;
-      if (CLEANUP_DIRNAME_RE.test(dirName))
-        return `"${dirName}" is reserved for cleanup sprints; pick a different slug`;
-      const focus = join(sdir, dirName, "sprint_focus.md");
-      if (!existsSync(focus) || statSync(focus).size === 0)
-        return `expected a non-empty sprint_focus.md in .working/sprints/${dirName}/`;
-      return null;
+      const after = listDir(sdir);
+      return checkSprintFocus(
+        {
+          before,
+          after,
+          withFocus: after.filter((d) => nonEmptyFile(join(sdir, d, "sprint_focus.md"))),
+        },
+        { sprintNumber, reuseDirName },
+      );
     },
   });
 
@@ -137,10 +104,7 @@ export async function stepSpec(ctx: Ctx, sprint: SprintSnapshot): Promise<void> 
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
-    check: () =>
-      existsSync(specPath) && statSync(specPath).size > 0
-        ? null
-        : `expected a non-empty spec.md at ${relSprintDir(sprint)}/spec.md`,
+    check: () => checkNonEmpty(readTextFile(specPath), `${relSprintDir(sprint)}/spec.md`),
   });
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} spec`, [".working"]);
 }
@@ -149,35 +113,13 @@ export async function stepSpec(ctx: Ctx, sprint: SprintSnapshot): Promise<void> 
 
 export async function stepTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
+  const relTicketsDir = join(relSprintDir(sprint), "tickets");
   await runAgentStep({
     stepId: "04-tickets",
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
-    check: () => {
-      const files = listDir(ticketsDir);
-      if (files.length === 0)
-        return `expected at least one ticket file in ${relSprintDir(sprint)}/tickets/`;
-      const errors: string[] = [];
-      const numbers: number[] = [];
-      for (const filename of files) {
-        const m = INITIAL_TICKET_FILENAME_RE.exec(filename);
-        if (!m) {
-          errors.push(`${filename}: filename must match NNN-kebab-slug.json (e.g. 001-first-thing.json)`);
-          continue;
-        }
-        numbers.push(Number(m[1]));
-        const { ticket, error } = checkTicketFile(join(ticketsDir, filename), filename);
-        if (error) errors.push(error);
-        else errors.push(...initialValueErrors(ticket!, filename));
-      }
-      numbers.sort((a, b) => a - b);
-      numbers.forEach((n, i) => {
-        if (n !== i + 1)
-          errors.push(`ticket numbers must start at 001 and be contiguous; found ${String(n).padStart(3, "0")} at position ${i + 1}`);
-      });
-      return errors.length > 0 ? errors.join("\n") : null;
-    },
+    check: () => checkInitialTickets(readDirFiles(ticketsDir), relTicketsDir),
   });
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} tickets`, [".working"]);
 }
@@ -191,18 +133,7 @@ export async function stepCleanupIdentify(ctx: Ctx, sprint: SprintSnapshot): Pro
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
-    check: () => {
-      if (!existsSync(specPath) || statSync(specPath).size === 0)
-        return `expected a non-empty spec.md at ${relSprintDir(sprint)}/spec.md`;
-      const firstLine = (readFileSync(specPath, "utf8").split("\n")[0] ?? "").trim();
-      if (!parseCandidatesStamp(firstLine))
-        return (
-          `expected the first line of ${relSprintDir(sprint)}/spec.md to be exactly the candidates stamp ` +
-          `"_Candidates: architecture=<yes|none>, clean-code=<yes|none>, docs=<yes|none>_" ` +
-          `(e.g. "_Candidates: architecture=yes, clean-code=none, docs=yes_"), got "${firstLine}"`
-        );
-      return null;
-    },
+    check: () => checkCandidatesStamp(readTextFile(specPath), `${relSprintDir(sprint)}/spec.md`),
   });
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} spec`, [".working"]);
 }
@@ -219,10 +150,7 @@ export async function stepCleanupTickets(
 ): Promise<void> {
   const category = CLEANUP_CATEGORIES.find((c) => c.key === categoryKey)!;
   const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
-  const beforeFiles = new Map<string, string>(
-    listDir(ticketsDir).map((f) => [f, readFileSync(join(ticketsDir, f), "utf8")]),
-  );
-  const filenameRe = new RegExp(`^${category.ticketId}-[a-z0-9-]+\\.json$`);
+  const beforeFiles = readDirFiles(ticketsDir);
 
   await runAgentStep({
     stepId: "04-cleanup-tickets",
@@ -234,37 +162,15 @@ export async function stepCleanupTickets(
       category: category.key,
       ticketId: category.ticketId,
     },
-    check: () => {
-      const created = listDir(ticketsDir).filter((f) => !beforeFiles.has(f));
-      const errors: string[] = [];
-      if (created.length !== 1) {
-        errors.push(
-          `expected exactly one new ticket file ${category.ticketId}-<kebab-slug>.json in ` +
-            `${relSprintDir(sprint)}/tickets/, found ${created.length}` +
-            (created.length > 0 ? ` (${created.join(", ")})` : ""),
-        );
-      } else {
-        const filename = created[0]!;
-        if (!filenameRe.test(filename)) {
-          errors.push(
-            `${filename}: the ${category.key} ticket must be named ${category.ticketId}-<kebab-slug>.json — its id is fixed`,
-          );
-        } else {
-          const { ticket, error } = checkTicketFile(join(ticketsDir, filename), filename);
-          if (error) errors.push(error);
-          else errors.push(...initialValueErrors(ticket!, filename));
-        }
-      }
-      for (const [filename, contentBefore] of beforeFiles) {
-        const path = join(ticketsDir, filename);
-        if (!existsSync(path)) {
-          errors.push(`${filename} was deleted; ticketizing must not delete tickets`);
-        } else if (readFileSync(path, "utf8") !== contentBefore) {
-          errors.push(`${filename} was modified; ticketizing must not modify existing tickets`);
-        }
-      }
-      return errors.length > 0 ? errors.join("\n") : null;
-    },
+    check: () =>
+      checkCleanupTickets(
+        { before: beforeFiles, after: readDirFiles(ticketsDir) },
+        {
+          category: category.key,
+          ticketId: category.ticketId,
+          relTicketsDir: join(relSprintDir(sprint), "tickets"),
+        },
+      ),
   });
 
   await gitCommitPaths(
@@ -314,20 +220,7 @@ export async function stepImplement(
       commitFormat,
       humanNoteSection,
     },
-    check: () => {
-      const { ticket, error } = checkTicketFile(ticketPath, ticketFilename);
-      if (error) return error;
-      const t = ticket!;
-      if (t.done && t.needs_human_intervention)
-        return `${ticketFilename}: exactly one of "done" / "needs_human_intervention" may be true, not both`;
-      if (!t.done && !t.needs_human_intervention)
-        return `${ticketFilename}: the run changed neither "done" nor "needs_human_intervention" — set "done": true, or "needs_human_intervention": true with a concrete reason`;
-      if (t.needs_human_intervention && !t.needs_human_intervention_reason)
-        return `${ticketFilename}: "needs_human_intervention" is true but "needs_human_intervention_reason" is empty`;
-      if (t.reviewed)
-        return `${ticketFilename}: "reviewed" is orchestrator-owned and must not be set by the implement agent`;
-      return null;
-    },
+    check: () => checkImplement(readTextFile(ticketPath), ticketFilename),
   });
 
   // Record exactly this run's commits on the ticket (spec §6.4).
@@ -355,12 +248,8 @@ export async function stepReview(
   const ticket = readTicketFile(ticketPath, ticketFilename);
   const isFix = isFixTicketId(ticket.id);
 
-  const beforeFiles = new Map<string, string>(
-    listDir(ticketsDir).map((f) => [f, readFileSync(join(ticketsDir, f), "utf8")]),
-  );
-  const fixAlreadyExists = [...beforeFiles.keys()].some(
-    (f) => f !== ticketFilename && f.startsWith(`${ticket.id}.`),
-  );
+  const beforeFiles = readDirFiles(ticketsDir);
+  const fixAlreadyExists = hasFixTicketFor(beforeFiles.keys(), ticket.id, ticketFilename);
 
   const fixTicketRules = isFix
     ? `This IS a fix ticket (its id contains "."). You must NOT create any new ticket. If a finding is ` +
@@ -390,52 +279,11 @@ export async function stepReview(
       fixTicketRules,
       diff,
     },
-    check: () => {
-      const afterFiles = listDir(ticketsDir);
-      const created = afterFiles.filter((f) => !beforeFiles.has(f));
-      const errors: string[] = [];
-
-      if (created.length > 1) {
-        errors.push(`at most one fix ticket may be created per review; found ${created.length}: ${created.join(", ")}`);
-      } else if (created.length === 1) {
-        const filename = created[0]!;
-        if (isFix) {
-          errors.push(`reviews of fix tickets must never create tickets, but ${filename} was created`);
-        } else if (fixAlreadyExists) {
-          errors.push(`a fix ticket for ${ticket.id} already exists; ${filename} must not be created`);
-        } else if (!new RegExp(`^${ticket.id}\\.1-[a-z0-9-]+\\.json$`).test(filename)) {
-          errors.push(`fix ticket must be named ${ticket.id}.1-<kebab-slug>.json, got ${filename}`);
-        } else {
-          const { ticket: fix, error } = checkTicketFile(join(ticketsDir, filename), filename);
-          if (error) errors.push(error);
-          else errors.push(...initialValueErrors(fix!, filename));
-        }
-      }
-
-      // Existing tickets must be untouched — except the reviewed fix ticket,
-      // which may have needs_human_intervention flagged on it.
-      for (const [filename, contentBefore] of beforeFiles) {
-        const path = join(ticketsDir, filename);
-        if (!existsSync(path)) {
-          errors.push(`${filename} was deleted; reviews must not delete tickets`);
-          continue;
-        }
-        const contentAfter = readFileSync(path, "utf8");
-        if (contentAfter === contentBefore) continue;
-        if (filename === ticketFilename && isFix) {
-          const { ticket: t, error } = checkTicketFile(path, filename);
-          if (error) errors.push(error);
-          else if (!t!.needs_human_intervention || !t!.needs_human_intervention_reason)
-            errors.push(
-              `${filename}: the only allowed change to a reviewed fix ticket is setting "needs_human_intervention": true with a concrete reason`,
-            );
-        } else {
-          errors.push(`${filename} was modified; the review must not modify existing tickets`);
-        }
-      }
-
-      return errors.length > 0 ? errors.join("\n") : null;
-    },
+    check: () =>
+      checkReview(
+        { before: beforeFiles, after: readDirFiles(ticketsDir) },
+        { ticketFilename, ticketId: ticket.id, isFix, fixAlreadyExists },
+      ),
   });
 
   // Orchestrator-owned: mark reviewed and commit (spec §8.5.2).
@@ -465,10 +313,7 @@ export async function stepUxPlan(ctx: Ctx, sprint: SprintSnapshot): Promise<void
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number, commitSummaries },
-    check: () =>
-      existsSync(planPath) && statSync(planPath).size > 0
-        ? null
-        : `expected a non-empty ux_test_plan.md at ${relPlanPath}`,
+    check: () => checkNonEmpty(readTextFile(planPath), relPlanPath),
   });
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux plan`, [relPlanPath]);
 }
@@ -484,13 +329,7 @@ export async function stepUxTest(ctx: Ctx, sprint: SprintSnapshot): Promise<void
     cwd: ctx.root,
     bundleDir: ctx.bundleDir,
     vars: { sprintDir: relSprintDir(sprint), sprintNumber: sprint.number },
-    check: () => {
-      if (!existsSync(findingsPath)) return `expected ${relFindingsPath} to exist`;
-      const firstLine = (readFileSync(findingsPath, "utf8").split("\n")[0] ?? "").trim();
-      if (firstLine !== UX_TICKETIZED_NO)
-        return `expected the first line of ${relFindingsPath} to be exactly "${UX_TICKETIZED_NO}", got "${firstLine}"`;
-      return null;
-    },
+    check: () => checkStamped(readTextFile(findingsPath), relFindingsPath, UX_TICKETIZED_NO),
   });
   // File-scoped pathspec: scratch/run artifacts the test agent left behind
   // must never end up in this commit.
@@ -507,19 +346,8 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
   const relFindingsPath = join(relSprintDir(sprint), "ux_findings.md");
   const findingsPath = join(ctx.root, relFindingsPath);
 
-  const beforeFiles = new Map<string, string>(
-    listDir(ticketsDir).map((f) => [f, readFileSync(join(ticketsDir, f), "utf8")]),
-  );
-  // Numbering continues after the highest existing NNN; fix tickets count
-  // via their integer part (after 003 and 003.1, the next is 004).
-  const maxExisting = Math.max(
-    0,
-    ...[...beforeFiles.keys()]
-      .map((f) => TICKET_FILENAME_RE.exec(f)?.[1])
-      .filter((id): id is string => id !== undefined)
-      .map((id) => Number(id.split(".")[0])),
-  );
-  const nextTicketNumber = String(maxExisting + 1).padStart(3, "0");
+  const beforeFiles = readDirFiles(ticketsDir);
+  const { maxExisting, next } = nextTicketNumber(beforeFiles.keys());
 
   await runAgentStep({
     stepId: "05.5-ux-tickets",
@@ -528,49 +356,20 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
     vars: {
       sprintDir: relSprintDir(sprint),
       sprintNumber: sprint.number,
-      findings: readFileSync(findingsPath, "utf8"),
-      nextTicketNumber,
+      findings: readRequiredTextFile(findingsPath),
+      nextTicketNumber: next,
     },
-    check: () => {
-      const created = listDir(ticketsDir).filter((f) => !beforeFiles.has(f));
-      const errors: string[] = [];
-      const numbers: number[] = [];
-      for (const filename of created) {
-        const m = UX_TICKET_FILENAME_RE.exec(filename);
-        if (!m) {
-          errors.push(
-            `${filename}: filename must match NNN-ux-kebab-slug.json (e.g. ${nextTicketNumber}-ux-fix-help.json)`,
-          );
-          continue;
-        }
-        numbers.push(Number(m[1]));
-        const { ticket, error } = checkTicketFile(join(ticketsDir, filename), filename);
-        if (error) errors.push(error);
-        else errors.push(...initialValueErrors(ticket!, filename));
-      }
-      numbers.sort((a, b) => a - b);
-      numbers.forEach((n, i) => {
-        if (n !== maxExisting + 1 + i)
-          errors.push(
-            `UX ticket numbers must continue contiguously from ${nextTicketNumber}; found ${String(n).padStart(3, "0")} at position ${i + 1}`,
-          );
-      });
-      for (const [filename, contentBefore] of beforeFiles) {
-        const path = join(ticketsDir, filename);
-        if (!existsSync(path)) {
-          errors.push(`${filename} was deleted; ticketizing must not delete tickets`);
-        } else if (readFileSync(path, "utf8") !== contentBefore) {
-          errors.push(`${filename} was modified; ticketizing must not modify existing tickets`);
-        }
-      }
-      return errors.length > 0 ? errors.join("\n") : null;
-    },
+    check: () =>
+      checkUxTickets(
+        { before: beforeFiles, after: readDirFiles(ticketsDir) },
+        { maxExisting, nextTicketNumber: next },
+      ),
   });
 
   // Orchestrator-owned: flip the findings stamp (spec §8.5.3) and commit it
   // together with the new tickets. A zero-candidate cleanup sprint reaches
   // this step with no tickets/ dir at all — git rejects missing pathspecs.
-  const lines = readFileSync(findingsPath, "utf8").split("\n");
+  const lines = readRequiredTextFile(findingsPath).split("\n");
   lines[0] = UX_TICKETIZED_YES;
   writeFileSync(findingsPath, lines.join("\n"));
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} ux tickets`, [
@@ -584,13 +383,7 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
 
 export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const reportPath = join(ctx.root, REPORT_REL);
-  const marker = `<section id="sprint-${sprint.number}">`;
-
-  // Sections other sprints already have must survive the edit.
-  const html = existsSync(reportPath) ? readFileSync(reportPath, "utf8") : "";
-  const otherMarkers = [...html.matchAll(/<section id="sprint-(\d{2})">/g)]
-    .map((m) => m[0])
-    .filter((m) => m !== marker);
+  const htmlBefore = readTextFile(reportPath);
 
   // Fresh read: tickets may have been created/updated since the snapshot.
   const current = readSprint(ctx.root, sprint.dirName);
@@ -629,31 +422,17 @@ export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void
       blockedTickets: blocked.length > 0 ? blocked.join("\n") : "(none)",
       sprintTypeSection,
     },
-    check: () => {
-      if (!existsSync(reportPath)) return `expected ${REPORT_REL} to exist`;
-      const content = readFileSync(reportPath, "utf8");
-      const count = content.split(marker).length - 1;
-      if (count === 0) return `expected ${REPORT_REL} to contain ${marker}`;
-      if (count > 1)
-        return `expected exactly one ${marker} in ${REPORT_REL}, found ${count} — replace the sprint's own section, never duplicate it`;
-      const lost = otherMarkers.filter((m) => !content.includes(m));
-      if (lost.length > 0)
-        return `other sprints' sections must not be removed; missing: ${lost.join(", ")}`;
-      return null;
-    },
+    check: () =>
+      checkReport(
+        { before: htmlBefore, after: readTextFile(reportPath) },
+        { sprintNumber: sprint.number, relPath: REPORT_REL },
+      ),
   });
 
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} report`, [REPORT_REL]);
 }
 
 // ---------------------------------------------------------------- step 7
-
-const VISION_STATUS_HEADINGS = [
-  "## What exists now",
-  "## What works (verified)",
-  "## Known gaps",
-  "## Blocked on human",
-];
 
 export async function stepVisionStatus(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const rel = join(".working", "vision_status.md");
@@ -669,17 +448,7 @@ export async function stepVisionStatus(ctx: Ctx, sprint: SprintSnapshot): Promis
       sprintDir: relSprintDir(sprint),
       visionStatusPath: rel,
     },
-    check: () => {
-      if (!existsSync(path)) return `expected ${rel} to exist`;
-      const content = readFileSync(path, "utf8");
-      const firstLine = (content.split("\n")[0] ?? "").trim();
-      if (firstLine !== stamp)
-        return `expected the first line of ${rel} to be exactly "${stamp}", got "${firstLine}"`;
-      const missing = VISION_STATUS_HEADINGS.filter((h) => !content.includes(h));
-      if (missing.length > 0)
-        return `expected ${rel} to contain the template headings; missing: ${missing.join(", ")}`;
-      return null;
-    },
+    check: () => checkVisionStatus(readTextFile(path), { relPath: rel, stamp }),
   });
 
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} vision status`, [rel]);
