@@ -18,7 +18,8 @@ Inspired by [wsff](https://github.com/humanlayer/advanced-context-engineering-fo
 ## Quick start
 
 Requirements in the target project: `bun` and `claude` on the PATH, and a git
-repository.
+repository with at least one commit on `main` (or whatever `BASE_BRANCH`
+names) checked out.
 
 ```bash
 # 1. Copy the bundle in — no package, no global install; the copy is yours to edit
@@ -79,7 +80,7 @@ resumes and finishes an in-progress sprint, it has no effect and says so.)
 | Code | Meaning |
 |------|---------|
 | 0 | Requested sprints completed; nothing blocked |
-| 1 | Validation failed, or a step failed its postcondition twice |
+| 1 | Validation failed (missing files, wrong Claude account), a step failed its postcondition twice, or a sprint-branch problem (wrong branch at startup, merge conflict) |
 | 2 | Sprint finished (report + vision status written) but tickets need human intervention |
 
 ## What a sprint leaves behind
@@ -116,7 +117,8 @@ not fixed, and a click-to-reveal quiz about the introduced code.
 
 Each sprint runs on its own `sprint/NN` git branch (created and merged by
 the orchestrator, never by an agent). A sprint that completes clean is
-merged back into `main` with a `--no-ff` merge commit and its branch is
+merged back into `main` (the configured `BASE_BRANCH`) with a `--no-ff`
+merge commit and its branch is
 deleted — one merge commit per sprint, so the history reads sprint by
 sprint:
 
@@ -218,7 +220,7 @@ flowchart TD
 
 | Step | Prompt | What the agent does | Writes |
 |---|---|---|---|
-| 1 validate | — (plain code) | checks `CONTEXT.md`, `vision.md`, `vision_status.md` exist; else exit 1 | — |
+| 1 validate | — (plain code) | checks `CONTEXT.md`, `vision.md`, `vision_status.md` exist, that the logged-in Claude account is the allowed one, and runs the sprint-branch preflight; else exit 1 | — |
 | 2 sprint focus | `02-sprint-focus` | picks ONE conservative focus area for the sprint, and why | `sprint_focus.md` |
 | 3 spec | `03-spec` | turns the focus into testable goals (no statuses — that's the tickets' job) | `spec.md` |
 | 4 tickets | `04-tickets` | breaks the spec into small, ordered, independently completable tickets | `tickets/NNN-slug.json` |

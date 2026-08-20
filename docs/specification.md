@@ -433,8 +433,9 @@ banner rules — degrade to plain text when stdout is not a TTY or `NO_COLOR`
 is set (checked once), so piped/CI output and the grep contracts
 (`[mmm-loop]` prefix on single-line status messages, `phase: <description>`
 in every banner) stay stable. The agents' own stdout/stderr is passed
-through byte-for-byte (teed live, per §2.1) — no prefixing, recoloring,
-buffering, or spinners.
+through byte-for-byte — the wrapper pipes it and re-emits it live, keeping
+only a bounded tail for the §6.3 rate-limit classification — so no
+prefixing, recoloring, buffering, or spinners.
 
 ## 8. The steps
 
