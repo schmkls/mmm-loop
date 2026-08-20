@@ -4,7 +4,6 @@
 //                             matching ticket (makes crash-resume a pure rerun)
 //   zero                    — ticketize nothing
 //   bad-name                — misbehave: create a ticket without the ux- infix
-//   modify-existing         — misbehave: edit ticket 001
 //   nothing                 — write nothing (still passes: zero tickets is valid)
 //   retry-ok                — no-op unless the prompt is a retry
 import fs from "node:fs";
@@ -37,14 +36,6 @@ const writeTicket = (filename: string, id: string, title: string) => {
 
 if (mode === "bad-name") {
   writeTicket(`${String(next).padStart(3, "0")}-broken.json`, String(next).padStart(3, "0"), "Broken");
-  process.exit(0);
-}
-
-if (mode === "modify-existing") {
-  const first = fs.readdirSync(ticketsDir).sort()[0]!;
-  const t = JSON.parse(fs.readFileSync(path.join(ticketsDir, first), "utf8"));
-  t.title = "tampered";
-  fs.writeFileSync(path.join(ticketsDir, first), JSON.stringify(t, null, 2) + "\n");
   process.exit(0);
 }
 

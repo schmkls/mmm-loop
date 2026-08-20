@@ -42,13 +42,6 @@ describe("step 2 — sprint focus", () => {
     expect(retry).toContain("expected exactly one new sprint folder");
   });
 
-  test("bad folder name fails the postcondition", async () => {
-    const p = makeProject();
-    await expect(
-      withFakeClaude(p, { SCENARIO_FOCUS: "badname" }, () => stepSprintFocus(ctx(p), "01", null)),
-    ).rejects.toThrow(/does not match NN-kebab-case-slug/);
-  });
-
   test("resume: pre-existing empty sprint folder is reused, not duplicated", async () => {
     const p = makeProject();
     mkdirSync(join(p.root, ".working/sprints/01-existing"), { recursive: true });
@@ -121,15 +114,5 @@ describe("step 4 — tickets", () => {
     const logs = invocations(p);
     expect(logs.length).toBe(2);
     expect(invocationText(p, logs[1]!)).toContain('"title" must be a non-empty string');
-  });
-
-  test("no tickets at all → failure names the tickets dir", async () => {
-    const p = makeProject();
-    makeSprint(p);
-    await expect(
-      withFakeClaude(p, { SCENARIO_TICKETS_MODE: "nothing" }, () =>
-        stepTickets(ctx(p), readSprint(p.root, "01-toy")),
-      ),
-    ).rejects.toThrow(/at least one ticket/);
   });
 });

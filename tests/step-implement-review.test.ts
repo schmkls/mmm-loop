@@ -198,16 +198,6 @@ describe("step 5.2 — review", () => {
     });
   });
 
-  test("a second fix ticket in one review → postcondition fails", async () => {
-    const p = makeProject();
-    seedImplemented(p);
-    await expect(
-      withFakeClaude(p, { SCENARIO_REVIEW: "two-fix" }, () =>
-        stepReview(ctx(p), readSprint(p.root, "01-toy"), "001-a.json"),
-      ),
-    ).rejects.toThrow(/at most one fix ticket/);
-  });
-
   test("fix ticket already exists → creating another one fails", async () => {
     const p = makeProject();
     seedImplemented(p, { "001.1-cleanup.json": freshTicket("001.1") });

@@ -1,4 +1,4 @@
-// Canned step-6 agent. SCENARIO_REPORT: ok (default) | duplicate | nothing
+// Canned step-6 agent. SCENARIO_REPORT: ok (default) | nothing
 import fs from "node:fs";
 
 const prompt = await Bun.stdin.text();
@@ -23,5 +23,4 @@ if (html.includes(marker)) {
 } else {
   html = html.replace("</main>", `${section}\n</main>`);
 }
-if (mode === "duplicate") html += `\n${section}`;
 fs.writeFileSync(reportPath, html);

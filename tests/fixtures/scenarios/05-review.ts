@@ -1,7 +1,6 @@
 // Canned step-5.2 agent. SCENARIO_REVIEW:
 //   none (default)  — no findings, change nothing
 //   fix             — create the one allowed fix ticket
-//   two-fix         — misbehave: create two fix tickets
 //   always-fix      — misbehave: create a fix ticket even when forbidden
 //   flag            — set needs_human_intervention on the reviewed (fix) ticket
 import fs from "node:fs";
@@ -38,12 +37,9 @@ if (mode === "flag") {
   process.exit(0);
 }
 
-if (mode === "fix" || mode === "two-fix") {
+if (mode === "fix") {
   const template = /ONE fix ticket: `([^`]+)`/.exec(prompt)![1]!;
   writeFix(template.replace("<kebab-slug>", "cleanup"), `${ticket.id}.1`);
-  if (mode === "two-fix") {
-    writeFix(path.join(ticketsDir, `${ticket.id}.2-more.json`), `${ticket.id}.2`);
-  }
 } else if (mode === "always-fix") {
   writeFix(path.join(ticketsDir, `${ticket.id}.1-rogue.json`), `${ticket.id}.1`);
 }

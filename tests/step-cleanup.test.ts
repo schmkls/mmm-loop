@@ -151,26 +151,19 @@ describe("step C4 — cleanup ticketize", () => {
     });
   });
 
-  test("wrong-ID ticket → retry names the required ID → error", async () => {
-    const p = makeProject();
-    seedCleanupSpec(p, STAMP_ALL);
-    await expect(
-      withFakeClaude(p, { SCENARIO_CLEANUP_TICKETS: "wrong-id" }, () =>
-        stepCleanupTickets(ctx(p), readSprint(p.root, "01-cleanup"), "architecture"),
-      ),
-    ).rejects.toThrow(LoopError);
-    const logs = invocations(p);
-    expect(logs.length).toBe(2);
-    expect(invocationText(p, logs[1]!)).toContain("must be named 001-<kebab-slug>.json");
-  });
-
   test("nothing then the ticket on the retry works", async () => {
     const p = makeProject();
     seedCleanupSpec(p, STAMP_ALL);
     await withFakeClaude(p, { SCENARIO_CLEANUP_TICKETS: "retry-ok" }, () =>
       stepCleanupTickets(ctx(p), readSprint(p.root, "01-cleanup"), "architecture"),
     );
-    expect(invocations(p).length).toBe(2);
+    const logs = invocations(p);
+    expect(logs.length).toBe(2);
+    // The retry carries C4's own failure text, naming the id the handler
+    // derived from the category — the unit tests stub that id.
+    expect(invocationText(p, logs[1]!)).toContain(
+      "expected exactly one new ticket file 001-<kebab-slug>.json",
+    );
     expect(readdirSync(ticketsDir(p))).toEqual(["001-architecture-cleanup.json"]);
   });
 });

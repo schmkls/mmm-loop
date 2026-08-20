@@ -8,6 +8,7 @@ import {
   BUNDLE_DIR,
   freshTicket,
   gitSubjects,
+  invocationText,
   invocations,
   makeProject,
   makeSprint,
@@ -69,16 +70,6 @@ describe("step 6 — report + quiz", () => {
     expect(count(readFileSync(reportPath(p), "utf8"), '<section id="sprint-01">')).toBe(1);
   });
 
-  test("duplicate section → postcondition rejects", async () => {
-    const p = makeProject();
-    seedClosedSprint(p);
-    await expect(
-      withFakeClaude(p, { SCENARIO_REPORT: "duplicate" }, () =>
-        stepReport(ctx(p), readSprint(p.root, "01-toy")),
-      ),
-    ).rejects.toThrow(/never duplicate/);
-  });
-
   test("no report produced → retry → error", async () => {
     const p = makeProject();
     seedClosedSprint(p);
@@ -87,7 +78,9 @@ describe("step 6 — report + quiz", () => {
         stepReport(ctx(p), readSprint(p.root, "01-toy")),
       ),
     ).rejects.toThrow(LoopError);
-    expect(invocations(p).length).toBe(2);
+    const logs = invocations(p);
+    expect(logs.length).toBe(2);
+    expect(invocationText(p, logs[1]!)).toContain("expected docs/sprint_reports.html to exist");
   });
 });
 

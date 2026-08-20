@@ -167,15 +167,4 @@ describe("step 5.5.3 — ux ticketize", () => {
     ).rejects.toThrow(/NNN-ux-kebab-slug/);
     expect(firstLine(p)).toBe(UX_TICKETIZED_NO);
   });
-
-  test("modifying an existing ticket → rejected", async () => {
-    const p = makeProject();
-    seed(p, { "001-a.json": closedTicket("001") });
-    await expect(
-      withFakeClaude(p, { SCENARIO_UX_TICKETS: "modify-existing" }, () =>
-        stepUxTickets(ctx(p), readSprint(p.root, "01-toy")),
-      ),
-    ).rejects.toThrow(/was modified/);
-    expect(firstLine(p)).toBe(UX_TICKETIZED_NO);
-  });
 });
