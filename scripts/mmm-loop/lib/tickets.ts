@@ -22,6 +22,41 @@ export interface Ticket {
 /** `NNN-slug.json` or `NNN.1-slug.json` (spec §4). Group 1 = ticket id. */
 export const TICKET_FILENAME_RE = /^(\d{3}(?:\.\d)?)-[a-z0-9-]+\.json$/;
 
+/** Initial ticket filenames only — fix tickets (`NNN.1`) are review-created. */
+export const INITIAL_TICKET_FILENAME_RE = /^(\d{3})-[a-z0-9-]+\.json$/;
+
+/** UX ticket filenames created by step 5.5.3 (spec §8.5.3). */
+export const UX_TICKET_FILENAME_RE = /^(\d{3})-ux-[a-z0-9-]+\.json$/;
+
+/**
+ * Numbering continues after the highest existing NNN; fix tickets count via
+ * their integer part (after 003 and 003.1, the next is 004).
+ */
+export function nextTicketNumber(filenames: Iterable<string>): {
+  maxExisting: number;
+  next: string;
+} {
+  const maxExisting = Math.max(
+    0,
+    ...[...filenames]
+      .map((f) => TICKET_FILENAME_RE.exec(f)?.[1])
+      .filter((id): id is string => id !== undefined)
+      .map((id) => Number(id.split(".")[0])),
+  );
+  return { maxExisting, next: String(maxExisting + 1).padStart(3, "0") };
+}
+
+/** A fix ticket for `ticketId` other than `self` already exists. Step 5.2
+ * computes this once and feeds both the prompt prose and the postcondition,
+ * so the two cannot disagree. */
+export function hasFixTicketFor(
+  filenames: Iterable<string>,
+  ticketId: string,
+  self: string,
+): boolean {
+  return [...filenames].some((f) => f !== self && f.startsWith(`${ticketId}.`));
+}
+
 export function isFixTicketId(id: string): boolean {
   return id.includes(".");
 }

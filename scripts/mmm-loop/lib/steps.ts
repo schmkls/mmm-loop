@@ -18,8 +18,10 @@ import { gitCommitPaths, gitDiffOfCommits, gitHead, gitNewCommits, gitSummaries 
 import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "./phases.ts";
 import { readSprint, readTicketFile, sprintsDir, SPRINT_DIRNAME_RE, type SprintSnapshot } from "./snapshot.ts";
 import {
+  INITIAL_TICKET_FILENAME_RE,
   isFixTicketId,
   TICKET_FILENAME_RE,
+  UX_TICKET_FILENAME_RE,
   validateTicket,
   type Ticket,
 } from "./tickets.ts";
@@ -144,9 +146,6 @@ export async function stepSpec(ctx: Ctx, sprint: SprintSnapshot): Promise<void> 
 }
 
 // ---------------------------------------------------------------- step 4
-
-/** Initial ticket filenames only — fix tickets (`NNN.1`) are review-created. */
-const INITIAL_TICKET_FILENAME_RE = /^(\d{3})-[a-z0-9-]+\.json$/;
 
 export async function stepTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
@@ -502,9 +501,6 @@ export async function stepUxTest(ctx: Ctx, sprint: SprintSnapshot): Promise<void
 }
 
 // ---------------------------------------------------------------- step 5.5.3
-
-/** UX ticket filenames created by step 5.5.3 (spec §8.5.3). */
-const UX_TICKET_FILENAME_RE = /^(\d{3})-ux-[a-z0-9-]+\.json$/;
 
 export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const ticketsDir = join(sprintsDir(ctx.root), sprint.dirName, "tickets");
