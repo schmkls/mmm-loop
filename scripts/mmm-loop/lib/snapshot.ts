@@ -1,5 +1,13 @@
-/** Read the filesystem state that phase derivation (lib/phases.ts) operates
- * on. All IO lives here so derivePhase stays a pure function. */
+/**
+ * Filesystem reads. Two consumers:
+ *   - the ProjectSnapshot phase derivation (lib/phases.ts) is computed from —
+ *     loop artifacts the orchestrator wrote and maintains, so a malformed or
+ *     missing one is a bug and throws (readTicketFile, readRequiredTextFile);
+ *   - the raw primitives step postconditions are judged on — fresh agent
+ *     output, where absent or malformed is an expected outcome to report, not
+ *     an exception (listDir, readTextFile, readDirFiles).
+ * Read IO lives here so both derivePhase and the postconditions stay IO-free.
+ */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -46,8 +54,41 @@ export function sprintsDir(root: string): string {
   return join(root, ".working", "sprints");
 }
 
-function nonEmptyFile(path: string): boolean {
+export function nonEmptyFile(path: string): boolean {
   return existsSync(path) && statSync(path).size > 0;
+}
+
+/** Sorted entry names in `dir`; a missing dir reads as empty. */
+export function listDir(dir: string): string[] {
+  return existsSync(dir) ? readdirSync(dir).sort() : [];
+}
+
+/** Untrusted read: whole file, or null when absent. Never throws on absence. */
+export function readTextFile(path: string): string | null {
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+/** Trusted read: a loop artifact the orchestrator itself wrote in an earlier
+ * step. Absent means the loop's own invariant broke, so this throws rather
+ * than coercing to "". */
+export function readRequiredTextFile(path: string): string {
+  if (!existsSync(path)) {
+    throw new LoopError(`Expected loop artifact ${path} to exist; an earlier step wrote it.`);
+  }
+  return readFileSync(path, "utf8");
+}
+
+/** filename → contents for every file directly in `dir`, in sorted order
+ * (error messages are emitted in iteration order). Missing dir = empty map. */
+export function readDirFiles(dir: string): Map<string, string> {
+  if (!existsSync(dir)) return new Map();
+  return new Map(
+    readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => e.name)
+      .sort()
+      .map((name) => [name, readFileSync(join(dir, name), "utf8")]),
+  );
 }
 
 export function readTicketFile(path: string, filename: string): Ticket {
