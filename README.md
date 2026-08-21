@@ -4,8 +4,9 @@ An autonomous, sprint-based agent loop for Claude Code. Point it at a project
 with a written vision and run it: each run plans one sprint, implements and
 reviews it ticket by ticket, UX-tests what it built, writes an HTML report,
 and updates its own picture of where the project stands — then halts so a
-human can look before the next run. Drop a note in `docs/feedback/inbox/`
-and the next sprint is planned from that instead.
+human can look before the next run. Whenever `docs/feedback/inbox/` is not
+empty, the next sprint is planned from the notes in it instead of from the
+vision.
 
 A deterministic orchestrator (TypeScript on [Bun](https://bun.sh)) drives the
 loop; fresh `claude -p` processes do only the creative work inside each step.
@@ -80,9 +81,11 @@ bun scripts/mmm-loop/loop.ts run --cleanup
 (`--cleanup` applies to the first sprint the run *creates*; if the run
 creates no cleanup sprint, it has no effect and says so.)
 
-If `docs/feedback/inbox/` holds anything, the next sprint created is a
-**feedback sprint** instead — that outranks both cleanup triggers. See
-[Feedback sprints](#feedback-sprints).
+Before it creates a sprint, the loop checks `docs/feedback/inbox/`. If the
+folder is not empty, that sprint is a **feedback sprint** instead — this
+outranks both cleanup triggers. The trigger is the folder being non-empty,
+not the files being new; the loop empties the inbox itself as it handles
+each item. See [Feedback sprints](#feedback-sprints).
 
 ### Exit codes
 
@@ -193,7 +196,7 @@ flowchart TD
     Derive --> Kind{"new sprint:<br/>which type?"}
 
     Kind -- "empty inbox,<br/>no cleanup due" --> Focus
-    Kind -- "feedback in<br/>docs/feedback/inbox" --> F2["F2 - triage feedback (agent)"]
+    Kind -- "docs/feedback/inbox<br/>not empty" --> F2["F2 - triage feedback (agent)"]
     Kind -- "empty inbox +<br/>--cleanup or cadence" --> C3
 
     F2 -- "sprint_focus.md +<br/>feedback stamp" --> Spec
@@ -309,12 +312,23 @@ echo "The CLI takes 20 seconds to print help. That is absurd." \
   > docs/feedback/inbox/slow-cli.md
 ```
 
-Before it creates its next sprint the loop looks in that folder. If anything
-is there, that sprint becomes a **feedback sprint** (`NN-feedback`) and is
-planned from your feedback instead of from the vision — this outranks both
-cleanup triggers, and a pending `--cleanup` moves to the next sprint the run
-creates (with the default `--max-sprints 1` there is none, and the run says
-so).
+Before it creates each sprint, the loop lists the inbox. An **item** is a
+`.md` file that is not a dotfile and has something other than whitespace in
+it — so a `.gitkeep`, an empty file, or a stray `notes.txt` is not one, and
+an accidental `touch` never costs you a sprint.
+
+If the inbox holds at least one item, that sprint becomes a **feedback
+sprint** (`NN-feedback`) and is planned from those items instead of from the
+vision. The test is the state of the folder, not the age of the files: every
+item still sitting there is triaged, whether you dropped it a minute ago or
+three sprints ago. Since the loop archives each item as it handles it (see
+below), the inbox empties itself and the sprint after a feedback sprint is a
+normal one again — unless you have dropped something new in the meantime.
+
+A feedback sprint outranks both cleanup triggers, and a pending `--cleanup`
+moves to the next sprint the run creates (with the default `--max-sprints 1`
+there is none, and the run says so).
+
 Step F2 replaces step 2 and asks the question step 2 cannot: **is this
 already captured in `docs/vision.md`, or does the product itself need to
 change?** Each item gets exactly one disposition, recorded by filename in
