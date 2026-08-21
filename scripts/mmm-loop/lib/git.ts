@@ -59,6 +59,17 @@ export async function gitLocalBranches(cwd: string): Promise<string[]> {
   return out.split("\n").filter(Boolean);
 }
 
+/** True when `path` is gitignored — a project may keep its feedback out of
+ * git, and `git add` on an ignored path is a hard error. */
+export async function gitIsIgnored(cwd: string, path: string): Promise<boolean> {
+  const proc = Bun.spawn(["git", "check-ignore", "-q", "--", path], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return (await proc.exited) === 0;
+}
+
 export async function gitBranchExists(cwd: string, name: string): Promise<boolean> {
   return (await gitLocalBranches(cwd)).includes(name);
 }

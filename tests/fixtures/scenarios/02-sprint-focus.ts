@@ -1,5 +1,5 @@
 // Canned step-2 agent. Modes via SCENARIO_FOCUS:
-//   ok (default) | cleanup-slug (reserved NN-cleanup name) | nothing
+//   ok (default) | cleanup-slug | feedback-slug (reserved names) | nothing
 import fs from "node:fs";
 import path from "node:path";
 
@@ -7,11 +7,12 @@ const prompt = await Bun.stdin.text();
 const mode = process.env.SCENARIO_FOCUS ?? "ok";
 if (mode === "nothing") process.exit(0);
 
-if (mode === "cleanup-slug") {
+if (mode === "cleanup-slug" || mode === "feedback-slug") {
   const num = /Create the folder `\.working\/sprints\/(\d{2})-/.exec(prompt)![1]!;
-  const dir = path.join(".working/sprints", `${num}-cleanup`);
+  const reserved = mode === "cleanup-slug" ? "cleanup" : "feedback";
+  const dir = path.join(".working/sprints", `${num}-${reserved}`);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "sprint_focus.md"), "# cleanup\n");
+  fs.writeFileSync(path.join(dir, "sprint_focus.md"), `# ${reserved}\n`);
   process.exit(0);
 }
 

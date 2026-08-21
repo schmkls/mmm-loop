@@ -24,6 +24,9 @@ Write `{{sprintDir}}/spec.md`:
 
 ## Do NOT
 
+- If the focus has a `## Vision proposals` section (a feedback sprint), it is
+  **out of scope**: those are proposals awaiting a human's decision on
+  `docs/vision.md`, not work. Spec only what `## What` asks for.
 - No statuses and no progress tracking — the spec is not a living checklist;
   tickets track progress.
 - No ticket breakdown — step 4 does that.

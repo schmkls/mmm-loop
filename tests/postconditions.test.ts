@@ -9,6 +9,7 @@ import { UX_TICKETIZED_NO } from "../scripts/mmm-loop/lib/phases.ts";
 import {
   checkCandidatesStamp,
   checkCleanupTickets,
+  checkFeedbackFocus,
   checkImplement,
   checkInitialTickets,
   checkNonEmpty,
@@ -105,6 +106,10 @@ describe("step 2 — sprint folder shape", () => {
   test("reserved cleanup slug", () =>
     expect(checkSprintFocus(obs("02-cleanup"), { sprintNumber: "02", reuseDirName: null })).toMatch(
       /reserved for cleanup sprints/,
+    ));
+  test("reserved feedback slug", () =>
+    expect(checkSprintFocus(obs("02-feedback"), { sprintNumber: "02", reuseDirName: null })).toMatch(
+      /reserved for feedback sprints/,
     ));
   test("empty focus file", () =>
     expect(
@@ -212,18 +217,145 @@ describe("step 4 — ticket numbering", () => {
     ));
 });
 
+describe("step F2 — feedback focus", () => {
+  const STAMP = "_Feedback: triaged=no, actionable=yes, vision-change=no_";
+  /** A focus file: stamp plus one disposition block per entry. */
+  const focus = (stamp: string, blocks: Record<string, string>) =>
+    `${stamp}\n\n# Sprint 01 — feedback\n\n## Feedback\n\n` +
+    Object.entries(blocks)
+      .map(([name, disposition]) => `### ${name}\n- Disposition: ${disposition}\n`)
+      .join("\n");
+  const inVision = (...names: string[]) =>
+    Object.fromEntries(names.map((n) => [n, "in-vision"]));
+  const opts = (itemNames: string[]) => ({ relPath: "d/sprint_focus.md", itemNames });
+  /** docs/feedback/ untouched by the agent — the usual case. */
+  const untouched: FilesDelta = { before: new Map(), after: new Map() };
+  const check = (content: string | null, itemNames: string[], d: FilesDelta = untouched) =>
+    checkFeedbackFocus(content, d, opts(itemNames));
+
+  test("a stamped focus disposing of every item passes", () =>
+    expect(check(focus(STAMP, inVision("a.md", "b.md")), ["a.md", "b.md"])).toBeNull());
+
+  test("an absent focus falls through to the non-empty message", () =>
+    expect(check(null, ["a.md"])).toBe(
+      "expected a non-empty sprint_focus.md at d/sprint_focus.md",
+    ));
+
+  test("a missing stamp is rejected, quoting the line found", () =>
+    expect(check(focus("# Sprint 01 — feedback", inVision("a.md")), ["a.md"])).toMatch(
+      /stamp .* got "# Sprint 01 — feedback"/,
+    ));
+
+  test("the orchestrator-owned triaged=yes is rejected", () =>
+    expect(
+      check(
+        focus("_Feedback: triaged=yes, actionable=yes, vision-change=no_", inVision("a.md")),
+        ["a.md"],
+      ),
+    ).toMatch(/"triaged" is orchestrator-owned/));
+
+  test("an item with no block of its own is named", () =>
+    expect(check(focus(STAMP, inVision("a.md")), ["a.md", "b.md"])).toMatch(
+      /b\.md has no "### b\.md" section/,
+    ));
+
+  test("headings match exactly — a longer name does not cover a shorter one", () =>
+    expect(check(focus(STAMP, inVision("slow-cli.md")), ["cli.md", "slow-cli.md"])).toMatch(
+      /cli\.md has no "### cli\.md" section/,
+    ));
+
+  test("zero or two disposition lines in one block are rejected", () => {
+    expect(check(focus(STAMP, { "a.md": "in-vision\n- Disposition: declined" }), ["a.md"])).toMatch(
+      /expected exactly one .* found 2/,
+    );
+    expect(check(`${STAMP}\n\n### a.md\n- What it says: nothing\n`, ["a.md"])).toMatch(
+      /expected exactly one .* found 0/,
+    );
+  });
+
+  test("an invented disposition is rejected", () =>
+    expect(check(focus(STAMP, { "a.md": "maybe-later" }), ["a.md"])).toMatch(
+      /"maybe-later" is not a disposition/,
+    ));
+
+  test("the stamp must agree with the dispositions it summarizes", () => {
+    // Claims no proposal while proposing one.
+    expect(check(focus(STAMP, { "a.md": "vision-change" }), ["a.md"])).toMatch(
+      /stamp says vision-change=no but an item is/,
+    );
+    // Claims a proposal without one.
+    expect(
+      check(
+        focus("_Feedback: triaged=no, actionable=yes, vision-change=proposed_", inVision("a.md")),
+        ["a.md"],
+      ),
+    ).toMatch(/stamp says vision-change=proposed but no item is/);
+    // Claims nothing to do while an item is work the vision already covers.
+    expect(
+      check(
+        focus("_Feedback: triaged=no, actionable=none, vision-change=no_", inVision("a.md")),
+        ["a.md"],
+      ),
+    ).toMatch(/stamp says actionable=none, but an item is dispositioned in-vision/);
+    // ... and the reverse: work for a sprint that disposed of nothing as
+    // in-vision would be work the current vision does not support.
+    expect(check(focus(STAMP, { "a.md": "declined" }), ["a.md"])).toMatch(
+      /stamp says actionable=yes, but no item is dispositioned in-vision/,
+    );
+  });
+
+  test("actionable=none is valid when nothing is in-vision", () =>
+    expect(
+      check(
+        focus("_Feedback: triaged=no, actionable=none, vision-change=proposed_", {
+          "a.md": "vision-change",
+          "b.md": "declined",
+        }),
+        ["a.md", "b.md"],
+      ),
+    ).toBeNull());
+
+  test("touching docs/feedback/ fails the step", () => {
+    const before = new Map([["docs/feedback/inbox/a.md", "original"]]);
+    const cases: [string, FilesDelta][] = [
+      ["created", { before, after: new Map([...before, ["docs/feedback/inbox/new.md", "x"]]) }],
+      ["deleted", { before, after: new Map() }],
+      ["modified", { before, after: new Map([["docs/feedback/inbox/a.md", "edited"]]) }],
+    ];
+    for (const [what, d] of cases) {
+      expect(check(focus(STAMP, inVision("a.md")), ["a.md"], d)).toContain(`was ${what}`);
+    }
+  });
+
+  test("editing docs/vision.md fails the step, in its own words", () => {
+    const d: FilesDelta = {
+      before: new Map([["docs/vision.md", "the north star"]]),
+      after: new Map([["docs/vision.md", "the north star, edited"]]),
+    };
+    expect(check(focus(STAMP, inVision("a.md")), ["a.md"], d)).toContain(
+      "docs/vision.md was modified; propose a vision change in the focus — never apply it",
+    );
+  });
+
+  test("failures are reported together, not one at a time", () => {
+    const failure = check(focus("nope", inVision("a.md")), ["a.md", "b.md"])!;
+    expect(failure).toMatch(/stamp/);
+    expect(failure).toMatch(/b\.md has no/);
+  });
+});
+
 describe("step C3 — candidates stamp", () => {
   const STAMP = "_Candidates: architecture=yes, clean-code=none, docs=yes_";
   test("well-formed stamp passes", () =>
     expect(checkCandidatesStamp(`${STAMP}\n\n# Cleanup spec`, "d/spec.md")).toBeNull());
   test("a spec without the stamp is rejected, quoting the line found", () =>
     expect(checkCandidatesStamp("# Cleanup spec\n", "d/spec.md")).toMatch(
-      /candidates stamp .* got "# Cleanup spec"$/,
+      /_Candidates: architecture=<yes\|none>.* got "# Cleanup spec"$/,
     ));
   test("a malformed category value is rejected", () =>
     expect(
       checkCandidatesStamp("_Candidates: architecture=maybe, clean-code=none, docs=yes_", "d/spec.md"),
-    ).toMatch(/candidates stamp/));
+    ).toMatch(/_Candidates: architecture=<yes\|none>/));
   test("an absent spec falls through to the non-empty message", () =>
     expect(checkCandidatesStamp(null, "d/spec.md")).toBe("expected a non-empty spec.md at d/spec.md"));
 });

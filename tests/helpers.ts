@@ -1,6 +1,14 @@
 /** Shared test helpers: temp projects wired to the fake `claude`. */
 
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/lib/phases.ts";
@@ -120,6 +128,9 @@ export function freshTicket(id: string, overrides: Partial<Ticket> = {}): Ticket
 export interface SprintFiles {
   dirName?: string;
   focus?: boolean;
+  /** Verbatim sprint_focus.md content (e.g. a feedback stamp); overrides the
+   * generic default written when `focus` is not false. */
+  focusContent?: string;
   spec?: boolean;
   /** Verbatim spec.md content (e.g. a cleanup candidates stamp); overrides
    * the generic default written when `spec` is not false. */
@@ -137,7 +148,9 @@ export function makeSprint(p: TestProject, files: SprintFiles = {}): string {
   const dirName = files.dirName ?? "01-toy";
   const dir = join(p.root, ".working", "sprints", dirName);
   mkdirSync(dir, { recursive: true });
-  if (files.focus !== false) {
+  if (files.focusContent !== undefined) {
+    writeFileSync(join(dir, "sprint_focus.md"), files.focusContent);
+  } else if (files.focus !== false) {
     writeFileSync(join(dir, "sprint_focus.md"), "# Sprint — toy\n\n## What\nToy.\n\n## Why\nTest.\n");
   }
   if (files.specContent !== undefined) {
@@ -168,6 +181,25 @@ export function makeSprint(p: TestProject, files: SprintFiles = {}): string {
   sh(p.root, "git", "add", "-A");
   sh(p.root, "git", "commit", "-q", "-m", `test: seed sprint ${dirName}`);
   return dirName;
+}
+
+/** Drop feedback items into docs/feedback/inbox/ and commit them, the way a
+ * human would before a run. */
+export function seedFeedback(p: TestProject, items: Record<string, string>): void {
+  const inbox = join(p.root, "docs", "feedback", "inbox");
+  mkdirSync(inbox, { recursive: true });
+  for (const [filename, content] of Object.entries(items)) {
+    writeFileSync(join(inbox, filename), content);
+  }
+  sh(p.root, "git", "add", "-A");
+  sh(p.root, "git", "commit", "-q", "-m", "test: seed feedback");
+}
+
+/** Item filenames in docs/feedback/inbox|handled (sorted, dotfiles such as
+ * the scaffolded .gitkeep excluded); missing dir = []. */
+export function feedbackFiles(p: TestProject, which: "inbox" | "handled"): string[] {
+  const dir = join(p.root, "docs", "feedback", which);
+  return existsSync(dir) ? readdirSync(dir).filter((f) => !f.startsWith(".")).sort() : [];
 }
 
 export function writeTicketFile(p: TestProject, dirName: string, filename: string, t: Ticket): void {

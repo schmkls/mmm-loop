@@ -168,7 +168,7 @@ describe("step C4 — cleanup ticketize", () => {
   });
 });
 
-describe("reserved slug (spec §6.1)", () => {
+describe("reserved slugs (spec §6.1)", () => {
   test("step 2 rejects a normal sprint folder named NN-cleanup", async () => {
     const p = makeProject();
     await expect(
@@ -176,5 +176,14 @@ describe("reserved slug (spec §6.1)", () => {
         stepSprintFocus(ctx(p), "01", null),
       ),
     ).rejects.toThrow(/reserved for cleanup sprints/);
+  });
+
+  test("step 2 rejects a normal sprint folder named NN-feedback", async () => {
+    const p = makeProject();
+    await expect(
+      withFakeClaude(p, { SCENARIO_FOCUS: "feedback-slug" }, () =>
+        stepSprintFocus(ctx(p), "01", null),
+      ),
+    ).rejects.toThrow(/reserved for feedback sprints/);
   });
 });

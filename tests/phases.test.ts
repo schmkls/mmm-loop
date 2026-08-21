@@ -25,7 +25,9 @@ function sprint(dirName: string, o: Partial<SprintSnapshot> = {}): SprintSnapsho
     dirName,
     number: dirName.slice(0, 2),
     isCleanup: /^\d{2}-cleanup$/.test(dirName),
+    isFeedback: /^\d{2}-feedback$/.test(dirName),
     hasFocus: true,
+    focusFirstLine: "# Sprint",
     hasSpec: true,
     specFirstLine: "# Spec",
     hasUxPlan: false,
@@ -408,6 +410,89 @@ describe("derivePhase — cleanup sprints (spec §6.1 cleanup rows)", () => {
       }),
     );
     expect(phase).toEqual({ step: "sprint-focus", sprintNumber: "04", reuseDirName: null });
+  });
+});
+
+describe("derivePhase — feedback sprints (spec §6.1 feedback rows)", () => {
+  const stamp = (actionable: string, visionChange = "no", triaged = "yes") =>
+    `_Feedback: triaged=${triaged}, actionable=${actionable}, vision-change=${visionChange}_`;
+
+  /** A feedback sprint's focus file carries the stamp F2 wrote. */
+  function feedback(o: Partial<SprintSnapshot> = {}): SprintSnapshot {
+    return sprint("01-feedback", { focusFirstLine: stamp("yes"), hasSpec: false, ...o });
+  }
+
+  test("no sprint_focus.md → step F2, never sprint-focus", () => {
+    const s = feedback({ hasFocus: false, focusFirstLine: null });
+    expect(derivePhase(snap([s]))).toEqual({ step: "feedback-focus", sprint: s });
+  });
+
+  test("malformed stamp → step F2 again (failed postcondition), not a throw", () => {
+    for (const firstLine of [
+      "# Sprint 01 — feedback",
+      "_Feedback: triaged=no, actionable=yes_",
+      "_Feedback: actionable=yes, vision-change=no_",
+      stamp("maybe"),
+      "_Candidates: architecture=yes, clean-code=none, docs=yes_",
+    ]) {
+      const s = feedback({ focusFirstLine: firstLine });
+      expect(derivePhase(snap([s]))).toEqual({ step: "feedback-focus", sprint: s });
+    }
+  });
+
+  test("a stamp the orchestrator never accepted (triaged=no) → step F2 again", () => {
+    // The agent writes the stamp before the postcondition runs and before
+    // the archive, so triaged=no is the only proof F2 finished.
+    const s = feedback({ focusFirstLine: stamp("yes", "no", "no") });
+    expect(derivePhase(snap([s]))).toEqual({ step: "feedback-focus", sprint: s });
+  });
+
+  test("actionable=yes → the normal spec → tickets → tail path", () => {
+    const noSpec = feedback();
+    expect(derivePhase(snap([noSpec]))).toEqual({ step: "spec", sprint: noSpec });
+
+    const noTickets = feedback({ hasSpec: true });
+    expect(derivePhase(snap([noTickets]))).toEqual({ step: "tickets", sprint: noTickets });
+
+    const withTickets = feedback({ hasSpec: true, tickets: [tf("001-fix-it.json")] });
+    expect(derivePhase(snap([withTickets]))).toMatchObject({
+      step: "implement",
+      ticketFilename: "001-fix-it.json",
+    });
+  });
+
+  test("actionable=none skips spec and tickets → straight to the UX rows", () => {
+    const none = feedback({ focusFirstLine: stamp("none", "proposed") });
+    expect(derivePhase(snap([none]))).toEqual({ step: "ux-plan", sprint: none });
+
+    // ... and on through the shared tail, exactly like an all-none cleanup.
+    const uxTested = feedback({
+      focusFirstLine: stamp("none", "proposed"),
+      hasUxPlan: true,
+      uxFindingsFirstLine: UX_TICKETIZED_YES,
+    });
+    expect(derivePhase(snap([uxTested]))).toEqual({ step: "report", sprint: uxTested });
+  });
+
+  test("a feedback sprint with tickets still reaches the tail after they close", () => {
+    const s = feedback({
+      hasSpec: true,
+      tickets: [tf("001-fix-it.json", { done: true, reviewed: true })],
+    });
+    expect(derivePhase(snap([s]))).toEqual({ step: "ux-plan", sprint: s });
+  });
+
+  test("a completed feedback sprint hands over to a new sprint", () => {
+    const s = feedback({
+      hasSpec: true,
+      tickets: [tf("001-fix-it.json", { done: true, reviewed: true })],
+      ...uxDone,
+    });
+    expect(
+      derivePhase(
+        snap([s], { report: '<section id="sprint-01">', visionLine: "_Last updated: sprint 01_" }),
+      ),
+    ).toEqual({ step: "sprint-focus", sprintNumber: "02", reuseDirName: null });
   });
 });
 

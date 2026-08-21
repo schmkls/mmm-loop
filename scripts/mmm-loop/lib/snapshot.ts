@@ -9,10 +9,11 @@
  * Read IO lives here so both derivePhase and the postconditions stay IO-free.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { CLEANUP_DIRNAME_RE } from "./cleanup.ts";
 import { LoopError } from "./errors.ts";
+import { FEEDBACK_DIRNAME_RE, INBOX_DIR, isInboxItem } from "./feedback.ts";
 import { TICKET_FILENAME_RE, validateTicket, type Ticket } from "./tickets.ts";
 
 export const SPRINT_DIRNAME_RE = /^(\d{2})-[a-z0-9-]+$/;
@@ -27,7 +28,13 @@ export interface SprintSnapshot {
   number: string; // e.g. "01"
   /** Folder is exactly `NN-cleanup` → cleanup sprint (spec §6.1). */
   isCleanup: boolean;
+  /** Folder is exactly `NN-feedback` → feedback sprint (spec §6.1). */
+  isFeedback: boolean;
   hasFocus: boolean;
+  /** First line of sprint_focus.md (trimmed), or null if the file is absent.
+   * Only feedback derivation consumes it (the feedback stamp); reading it
+   * here keeps derivePhase IO-free, same split as specFirstLine. */
+  focusFirstLine: string | null;
   hasSpec: boolean;
   /** First line of spec.md (trimmed), or null if the file is absent. Only
    * cleanup derivation consumes it (the candidates stamp); reading it here
@@ -52,6 +59,36 @@ export interface ProjectSnapshot {
 
 export function sprintsDir(root: string): string {
   return join(root, ".working", "sprints");
+}
+
+/**
+ * Inbox items (spec §8.9): `*.md` files directly in `docs/feedback/inbox/`
+ * that hold something to read, sorted. A missing folder reads as empty — the
+ * feedback folders are optional. Untrusted human input, so nothing here
+ * throws: a directory named `x.md`, a dangling symlink, and a file deleted
+ * between the listing and the read are all simply not items.
+ *
+ * Not part of the snapshot: derivation never reads the inbox (the focus
+ * stamp is what tells it whether the triage has run). The orchestrator reads
+ * it at the sprint boundary, after any merge, and again inside step F2.
+ */
+export function readFeedbackInbox(root: string): string[] {
+  const dir = join(root, INBOX_DIR);
+  return listDir(dir).filter((f) => isInboxItem(f) && hasContent(join(dir, f)));
+}
+
+/** A regular file with something other than whitespace in it. An accidental
+ * `touch` — or `echo "" >` — must not cost a whole sprint. `lstatSync`, so a
+ * symlink is never an item: the archive would hold a dangling link instead
+ * of the human's words, and readDirFiles (the untouched check's eyes) does
+ * not see symlinks either. */
+function hasContent(path: string): boolean {
+  try {
+    if (!lstatSync(path).isFile()) return false;
+    return readFileSync(path, "utf8").trim().length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export function nonEmptyFile(path: string): boolean {
@@ -120,11 +157,16 @@ export function readSprint(root: string, dirName: string): SprintSnapshot {
   }
   const findingsPath = join(dir, "ux_findings.md");
   const specPath = join(dir, "spec.md");
+  const focusPath = join(dir, "sprint_focus.md");
   return {
     dirName,
     number: SPRINT_DIRNAME_RE.exec(dirName)![1]!,
     isCleanup: CLEANUP_DIRNAME_RE.test(dirName),
-    hasFocus: nonEmptyFile(join(dir, "sprint_focus.md")),
+    isFeedback: FEEDBACK_DIRNAME_RE.test(dirName),
+    hasFocus: nonEmptyFile(focusPath),
+    focusFirstLine: existsSync(focusPath)
+      ? (readFileSync(focusPath, "utf8").split("\n")[0] ?? "").trim()
+      : null,
     hasSpec: nonEmptyFile(specPath),
     specFirstLine: existsSync(specPath)
       ? (readFileSync(specPath, "utf8").split("\n")[0] ?? "").trim()

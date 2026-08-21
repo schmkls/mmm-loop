@@ -4,7 +4,8 @@ An autonomous, sprint-based agent loop for Claude Code. Point it at a project
 with a written vision and run it: each run plans one sprint, implements and
 reviews it ticket by ticket, UX-tests what it built, writes an HTML report,
 and updates its own picture of where the project stands — then halts so a
-human can look before the next run.
+human can look before the next run. Drop a note in `docs/feedback/inbox/`
+and the next sprint is planned from that instead.
 
 A deterministic orchestrator (TypeScript on [Bun](https://bun.sh)) drives the
 loop; fresh `claude -p` processes do only the creative work inside each step.
@@ -35,7 +36,8 @@ bun scripts/mmm-loop/loop.ts init
 bun scripts/mmm-loop/loop.ts run
 ```
 
-`init` scaffolds four files:
+`init` scaffolds four files, plus an optional feedback drop-box
+(`docs/feedback/` with a README and the two folders below):
 
 - `docs/CONTEXT.md` — always-relevant context given to every agent: what the
   project is, tech stack, how to run and test, conventions.
@@ -45,6 +47,9 @@ bun scripts/mmm-loop/loop.ts run
   stands (starts as "nothing is built yet").
 - `.working/learnings.md` — append-only one-liners agents leave for each
   other (gotchas, conventions).
+- `docs/feedback/inbox/` and `docs/feedback/handled/` — where you drop
+  feedback for the loop, and where it archives what it has handled. Optional:
+  delete them and nothing breaks. See [Feedback sprints](#feedback-sprints).
 
 `CONTEXT.md` and `vision.md` are the two files the whole loop feeds on — fill
 them in before the first run.
@@ -72,8 +77,12 @@ Every third sprint (the cadence is configurable, `0` disables it) runs as a
 bun scripts/mmm-loop/loop.ts run --cleanup
 ```
 
-(`--cleanup` applies to the first sprint the run *creates*; if the run only
-resumes and finishes an in-progress sprint, it has no effect and says so.)
+(`--cleanup` applies to the first sprint the run *creates*; if the run
+creates no cleanup sprint, it has no effect and says so.)
+
+If `docs/feedback/inbox/` holds anything, the next sprint created is a
+**feedback sprint** instead — that outranks both cleanup triggers. See
+[Feedback sprints](#feedback-sprints).
 
 ### Exit codes
 
@@ -90,6 +99,10 @@ Everything the loop produces is committed to git as it goes:
 ```
 docs/
   sprint_reports.html          # step 6's report (open it in a browser)
+  feedback/
+    inbox/                     # you drop feedback here
+    handled/
+      02-slow-cli.md           # archived by the sprint that handled it
 .working/                      # the loop's memory — tracked in git
   vision_status.md
   learnings.md
@@ -177,10 +190,14 @@ flowchart TD
     Validate -- no --> Exit1(["exit 1"])
     Validate -- yes --> Derive["derive phase from disk<br/>(crash-safe resume point)"]
     Derive -. "resume can land on<br/>any step mid-sprint" .-> Loop
-    Derive --> Kind{"new sprint:<br/>cleanup due?"}
+    Derive --> Kind{"new sprint:<br/>which type?"}
 
-    Kind -- no --> Focus
-    Kind -- "--cleanup flag<br/>or cadence" --> C3
+    Kind -- "empty inbox,<br/>no cleanup due" --> Focus
+    Kind -- "feedback in<br/>docs/feedback/inbox" --> F2["F2 - triage feedback (agent)"]
+    Kind -- "empty inbox +<br/>--cleanup or cadence" --> C3
+
+    F2 -- "sprint_focus.md +<br/>feedback stamp" --> Spec
+    F2 -. "actionable=none" .-> UxGate
 
     subgraph Feature["feature planning"]
         Focus["2 - sprint focus (agent)"] -- "sprint_focus.md" --> Spec["3 - spec (agent)"]
@@ -231,6 +248,7 @@ flowchart TD
 | 5.5.3 UX ticketize | `05.5-ux-tickets` | turns findings worth fixing into normal tickets that run in the same sprint | `tickets/NNN-ux-slug.json` (zero or more) |
 | 6 report | `06-report` | creates/extends the report: summary, diagram, key decisions, blocked banner, unfixed UX findings, quiz | `docs/sprint_reports.html` |
 | 7 vision status | `07-vision-status` | rewrites the status file to match reality — fixed template, replaced each sprint, ~120 lines max | `.working/vision_status.md` |
+| F2 feedback triage | `02-feedback-focus` | feedback variant of 2: gives every inbox item one disposition — already in the vision, needs a vision change (a proposal, never an edit), or declined — and writes the sprint focus from that | `sprint_focus.md` with a feedback stamp |
 | C3 identify | `03-cleanup-identify` | cleanup variant of 2–3: at most one obvious-win candidate per category (architecture, clean-code, docs) | `spec.md` with a candidates stamp |
 | C4 ticketize | `04-cleanup-tickets` | cleanup variant of 4: one agent run per `yes` category, one ticket each with fixed IDs `001`–`003` | `tickets/00N-slug.json` |
 
@@ -281,12 +299,67 @@ empty sprint still runs its UX pass (doubling as a regression check, since
 cleanup must not change behavior) and reports that nothing needed cleaning.
 `docs/vision.md` is human-authored and never touched by the loop.
 
+### Feedback sprints
+
+Feedback is a file drop. Write what you think — one markdown file per point
+— into `docs/feedback/inbox/`:
+
+```bash
+echo "The CLI takes 20 seconds to print help. That is absurd." \
+  > docs/feedback/inbox/slow-cli.md
+```
+
+Before it creates its next sprint the loop looks in that folder. If anything
+is there, that sprint becomes a **feedback sprint** (`NN-feedback`) and is
+planned from your feedback instead of from the vision — this outranks both
+cleanup triggers, and a pending `--cleanup` moves to the next sprint the run
+creates (with the default `--max-sprints 1` there is none, and the run says
+so).
+Step F2 replaces step 2 and asks the question step 2 cannot: **is this
+already captured in `docs/vision.md`, or does the product itself need to
+change?** Each item gets exactly one disposition, recorded by filename in
+the sprint focus:
+
+- **in-vision** — the vision already covers it; the gap is execution. This
+  is what the sprint's focus is built from.
+- **vision-change** — the vision does not cover it, or your feedback
+  contradicts it. `docs/vision.md` is yours and the loop never edits it, so
+  the item comes back as a written proposal in the sprint focus and the
+  report, and only vision-compatible work is taken on now.
+- **declined** — out of scope, already done, or not worth it, with the
+  reason written down.
+
+The focus file's first line stamps the outcome (`_Feedback: triaged=yes,
+actionable=yes, vision-change=proposed_`), and the orchestrator checks that
+stamp against the dispositions rather than believing it: every item must
+have its own section with exactly one disposition, and `actionable=none` is
+only accepted when nothing is `in-vision`. `none` is then a valid, cheap
+result — the loop skips the spec and tickets entirely rather than inventing
+work. Everything else — spec, tickets, implement/review, UX pass, report,
+vision status, the sprint branch and its merge — is the normal machinery.
+
+`docs/vision.md` stays yours: the triage step fails outright if it edits the
+vision (or anything under `docs/feedback/`), so a proposal can never quietly
+become a change. The run tells you what it decided (`📮 sprint 02 feedback:
+1 in-vision, 1 vision-change, 1 declined`), the report renders a proposed
+vision change as prominently as a blocked ticket, and `vision_status.md`
+keeps it under "Blocked on human" every sprint until you act on it.
+
+Once triaged, each item is moved to `docs/feedback/handled/NN-<name>.md` —
+your words, untouched, filed under the sprint that handled them; what was
+decided about each one lives in that sprint's `sprint_focus.md` and in the
+report. To re-open an item, move the file back. Feedback dropped while a
+sprint is running waits for the next sprint boundary — a sprint's scope
+never shifts under the steps already running against it.
+
 ### Crash safety and resume
 
 There is no state file. On every `run`, the orchestrator derives the current
 phase purely from what's on disk: which sprint folders exist, each ticket's
 `done`/`reviewed`/`needs_human_intervention` fields, the
-`_Ticketized: no|yes_` stamp on `ux_findings.md`, whether the report contains
+`_Ticketized: no|yes_` stamp on `ux_findings.md`, the `_Feedback:
+triaged=no|yes_` stamp on a feedback sprint's `sprint_focus.md`, whether the
+report contains
 `<section id="sprint-NN">`, and the `_Last updated: sprint NN_` stamp on
 `vision_status.md`. Kill the loop at any point and rerun — it re-enters
 exactly where the files say it left off. This is also why `.working/` must
@@ -320,8 +393,8 @@ All knobs live in the copy inside your project:
   the wrong subscription. Default `null` = accept any account. The
   `MMM_LOOP_ALLOWED_CLAUDE_USER` env var overrides per run (empty string =
   accept any).
-- **`scripts/mmm-loop/prompts/*.md`** — the twelve step prompts. Editing them
-  per project is normal and expected.
+- **`scripts/mmm-loop/prompts/*.md`** — the thirteen step prompts. Editing
+  them per project is normal and expected.
 
 ## Developing mmm-loop itself
 
