@@ -168,53 +168,64 @@ failed check gets one retry with the failure description appended to the
 prompt; a second failure stops the run (exit 1). Nothing checkable by code is
 ever delegated to an LLM.
 
-Every box marked "agent" below is one such fresh process; edge labels are the
-artifacts each step hands to the next.
+There is no state machine to advance and no state file to keep in sync. Each
+turn of the loop asks the filesystem one question — *what is the next missing
+artifact?* — runs the single agent that produces it, and asks again:
 
-```mermaid
-flowchart TD
-    Run(["bun loop.ts run"]) --> Validate{"1 - required<br/>files exist?"}
-    Validate -- no --> Exit1(["exit 1"])
-    Validate -- yes --> Derive["derive phase from disk<br/>(crash-safe resume point)"]
-    Derive -. "resume can land on<br/>any step mid-sprint" .-> Loop
-    Derive --> Kind{"new sprint:<br/>cleanup due?"}
-
-    Kind -- no --> Focus
-    Kind -- "--cleanup flag<br/>or cadence" --> C3
-
-    subgraph Feature["feature planning"]
-        Focus["2 - sprint focus (agent)"] -- "sprint_focus.md" --> Spec["3 - spec (agent)"]
-        Spec -- "spec.md" --> Tickets["4 - tickets (agent)"]
-    end
-
-    subgraph Cleanup["cleanup planning"]
-        C3["C3 - identify (agent)"] -- "spec.md +<br/>candidates stamp" --> C4["C4 - ticketize<br/>(agent per category)"]
-    end
-
-    Tickets -- "tickets/NNN-slug.json" --> Implement
-    C4 -- "tickets/00N-slug.json" --> Implement
-
-    subgraph Loop["ticket loop — first open ticket, one at a time"]
-        Implement["5.1 - implement (agent)"] -- "code commits +<br/>ticket status" --> Review["5.2 - review (agent)"]
-        Review -- "at most one fix ticket<br/>NNN.1-slug.json" --> Implement
-    end
-
-    Loop -- "all tickets closed" --> UxGate{"UX pass<br/>done?"}
-    UxGate -- "not yet" --> UxPlan
-
-    subgraph Ux["UX pass — once per sprint"]
-        UxPlan["5.5.1 - UX plan (agent)"] -- "ux_test_plan.md" --> UxTest["5.5.2 - UX test (agent)"]
-        UxTest -- "ux_findings.md" --> UxTix["5.5.3 - ticketize (agent)"]
-    end
-
-    UxTix -- "zero or more<br/>tickets/NNN-ux-slug.json" --> Implement
-    UxGate -- yes --> Report["6 - report (agent)"]
-    Report -- "docs/sprint_reports.html" --> Vision["7 - vision status (agent)"]
-    Vision -- ".working/vision_status.md" --> Stop{"blocked<br/>tickets?"}
-    Stop -- yes --> Exit2(["exit 2"])
-    Stop -- "no, sprints left" --> Derive
-    Stop -- "no, done" --> Exit0(["exit 0"])
 ```
+run:
+    step 1 — validate: required files, the logged-in Claude account, and the
+             git branch preflight; any problem exits 1 before anything spawns
+
+    repeat forever:
+        step = nextStep(what is on disk)
+
+        if step == "plan a new sprint":        # the previous one is finished
+            merge sprint/NN into the base branch
+              ...unless it has blocked tickets → exit 2, branch left unmerged
+            if --max-sprints is used up        → exit 0
+            create the next sprint/NN branch, and (on --cleanup or every
+            CLEANUP_CADENCE-th sprint) an NN-cleanup folder to mark its type
+
+        spawn step's agent → check its postcondition → commit what it wrote
+        # postcondition fails: one retry with the failure appended, then exit 1
+        # usage limit hit:     sleep until reset, re-run, no retry consumed
+```
+
+`nextStep` is a pure function of the files on disk. It reads top to bottom and
+returns at the first thing that is missing:
+
+```
+nextStep:
+    sprint = the highest-numbered folder in .working/sprints/
+
+    # planning — cleanup sprints swap steps 2–4 for C3/C4
+    feature sprint:  no sprint_focus.md → 2 | no spec.md → 3 | no tickets → 4
+    cleanup sprint:  no spec.md → C3 | a "yes" category with no ticket yet → C4
+
+    # ticket loop — walk tickets in filename order, first actionable one wins
+    for each ticket:
+        done but not reviewed  → 5.2 review
+        not done               → 5.1 implement
+    # a review's fix ticket NNN.1 sorts right after its parent, so the next
+    # pass simply picks it up; blocked tickets count as closed and are skipped
+
+    # all tickets closed:
+    if the report has no <section id="sprint-NN">:   # ⇒ UX pass not done yet
+        no ux_test_plan.md            → 5.5.1
+        no ux_findings.md             → 5.5.2
+        findings stamped "not yet ticketized" → 5.5.3
+              ↳ any tickets it writes drop the walk back to 5.1
+        otherwise                     → 6 report
+    if vision_status.md isn't stamped with this sprint number → 7
+    otherwise                                                 → plan a new sprint
+```
+
+Two consequences worth naming. Reviewing an earlier ticket outranks
+implementing a later one, so a fix ticket lands before the sprint moves on.
+And the report section doubles as the UX pass's "done" marker — once it
+exists, no later pass can re-enter 5.5, which is what bounds the pass to once
+per sprint even when its tickets send the loop back to implement.
 
 ### The steps
 
