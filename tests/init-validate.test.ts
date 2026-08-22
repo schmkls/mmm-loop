@@ -25,6 +25,16 @@ describe("init + step-1 validation", () => {
     expect(readFileSync(join(p.root, ".working/learnings.md"), "utf8")).toContain("# Learnings");
   });
 
+  test("init scaffolds the optional feedback folders, empty of items", () => {
+    const p = makeProject({ scaffold: false });
+    expect(runLoop(p, ["init"]).exitCode).toBe(0);
+    expect(readFileSync(join(p.root, "docs/feedback/README.md"), "utf8")).toContain("# Feedback");
+    expect(existsSync(join(p.root, "docs/feedback/inbox/.gitkeep"))).toBe(true);
+    expect(existsSync(join(p.root, "docs/feedback/handled/.gitkeep"))).toBe(true);
+    // Optional by design: a project without them still validates and runs.
+    expect(readFileSync(join(p.root, "docs/CONTEXT.md"), "utf8")).toContain("# Context");
+  });
+
   test("rerunning init leaves pre-existing files untouched", () => {
     const p = makeProject({ scaffold: false });
     runLoop(p, ["init"]);

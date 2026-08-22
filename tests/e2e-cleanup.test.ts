@@ -207,7 +207,7 @@ describe("e2e cleanup sprints", () => {
     makeSprint(p, { tickets: { "001-a.json": freshTicket("001") } });
     const r = runLoop(p, ["run", "--cleanup"], quietUx);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("--cleanup had no effect: this run created no new sprint");
+    expect(r.stdout).toContain("--cleanup had no effect: no cleanup sprint was created this run");
     expect(readdirSync(join(p.root, ".working/sprints")).some((d) => d.endsWith("-cleanup"))).toBe(
       false,
     );

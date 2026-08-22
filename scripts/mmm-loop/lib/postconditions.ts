@@ -19,7 +19,21 @@
  */
 
 import { basename } from "node:path";
-import { CLEANUP_DIRNAME_RE, parseCandidatesStamp, type CleanupCategory } from "./cleanup.ts";
+import {
+  CANDIDATES_STAMP_EXAMPLE,
+  CANDIDATES_STAMP_SHAPE,
+  CLEANUP_DIRNAME_RE,
+  parseCandidatesStamp,
+  type CleanupCategory,
+} from "./cleanup.ts";
+import {
+  DISPOSITIONS,
+  FEEDBACK_DIRNAME_RE,
+  FEEDBACK_STAMP_EXAMPLE,
+  FEEDBACK_STAMP_SHAPE,
+  parseDispositions,
+  parseFeedbackStamp,
+} from "./feedback.ts";
 import { SPRINT_DIRNAME_RE } from "./snapshot.ts";
 import {
   INITIAL_TICKET_FILENAME_RE,
@@ -112,6 +126,24 @@ export function checkStamped(content: string | null, relPath: string, expected: 
     : `expected the first line of ${relPath} to be exactly "${expected}", got "${firstLine}"`;
 }
 
+/** Steps C3 and F2: the file exists and its first line *parses* as the
+ * stamp — the shape-matching twin of checkStamped's exact match. */
+export function checkStampShape(
+  content: string | null,
+  relPath: string,
+  parse: (line: string) => unknown,
+  shape: string,
+  example: string,
+): Failure {
+  const empty = checkNonEmpty(content, relPath);
+  if (empty) return empty;
+  const firstLine = (content!.split("\n")[0] ?? "").trim();
+  return parse(firstLine)
+    ? null
+    : `expected the first line of ${relPath} to be exactly the stamp "${shape}" ` +
+        `(e.g. "${example}"), got "${firstLine}"`;
+}
+
 // ------------------------------------------------------------------- step 2
 
 export interface SprintDirsObservation {
@@ -146,6 +178,8 @@ export function checkSprintFocus(
     return `new sprint folder "${dirName}" must be numbered ${opts.sprintNumber}`;
   if (CLEANUP_DIRNAME_RE.test(dirName))
     return `"${dirName}" is reserved for cleanup sprints; pick a different slug`;
+  if (FEEDBACK_DIRNAME_RE.test(dirName))
+    return `"${dirName}" is reserved for feedback sprints; pick a different slug`;
   if (!obs.withFocus.includes(dirName))
     return `expected a non-empty sprint_focus.md in .working/sprints/${dirName}/`;
   return null;
@@ -176,19 +210,116 @@ export function checkInitialTickets(files: Map<string, string>, relTicketsDir: s
   return errors.length > 0 ? errors.join("\n") : null;
 }
 
+// ------------------------------------------------------------------ step F2
+
+/**
+ * Step F2 (spec §8.9): the triage's focus file must be stamped `triaged=no`
+ * (the orchestrator owns the flip), must dispose of every inbox item under
+ * its own `### <filename>` heading, and its stamp must agree with those
+ * dispositions. Every item is about to be archived, so "the agent read it
+ * and said what it decided" is the one thing worth proving — and, as
+ * everywhere else in this loop, it is proved by code rather than trusted.
+ */
+export function checkFeedbackFocus(
+  content: string | null,
+  d: FilesDelta,
+  opts: { relPath: string; itemNames: string[] },
+): Failure {
+  const stampFailure = checkStampShape(
+    content,
+    opts.relPath,
+    parseFeedbackStamp,
+    FEEDBACK_STAMP_SHAPE,
+    FEEDBACK_STAMP_EXAMPLE,
+  );
+  if (content === null || content.length === 0) return stampFailure;
+
+  const errors: string[] = [];
+  if (stampFailure) errors.push(stampFailure);
+  const stamp = parseFeedbackStamp((content.split("\n")[0] ?? "").trim());
+  if (stamp?.triaged === "yes") {
+    errors.push(
+      `${opts.relPath}: "triaged" is orchestrator-owned — write triaged=no; the loop flips it ` +
+        `once the items are archived`,
+    );
+  }
+
+  const blocks = parseDispositions(content);
+  const found: string[] = [];
+  for (const name of opts.itemNames) {
+    const values = blocks.get(name);
+    if (values === undefined) {
+      errors.push(`${name} has no "### ${name}" section in ${opts.relPath} — every item must be triaged`);
+    } else if (values.length !== 1) {
+      errors.push(
+        `${name}: expected exactly one "- Disposition: <${DISPOSITIONS.join("|")}>" line under ` +
+          `"### ${name}", found ${values.length}`,
+      );
+    } else if (!DISPOSITIONS.includes(values[0] as never)) {
+      errors.push(`${name}: "${values[0]}" is not a disposition; use one of ${DISPOSITIONS.join(", ")}`);
+    } else {
+      found.push(values[0]!);
+    }
+  }
+
+  // The stamp is a summary of the dispositions, so it can be checked
+  // against them instead of believed.
+  if (stamp && found.length === opts.itemNames.length) {
+    const proposed = found.includes("vision-change");
+    if (proposed !== (stamp.visionChange === "proposed")) {
+      errors.push(
+        `the stamp says vision-change=${stamp.visionChange} but ${proposed ? "an item is" : "no item is"} ` +
+          `dispositioned vision-change`,
+      );
+    }
+    // actionable=yes iff something is in-vision: work the current vision
+    // already covers is exactly what this sprint may do, and nothing else.
+    if (found.includes("in-vision") !== (stamp.actionable === "yes")) {
+      errors.push(
+        found.includes("in-vision")
+          ? `the stamp says actionable=none, but an item is dispositioned in-vision — work the ` +
+              `current vision already covers is actionable`
+          : `the stamp says actionable=yes, but no item is dispositioned in-vision — a sprint may ` +
+              `only take on work the current vision already supports`,
+      );
+    }
+  }
+
+  errors.push(...feedbackUntouchedErrors(d));
+  return errors.length > 0 ? errors.join("\n") : null;
+}
+
+/** What the triage may read but never write: `docs/feedback/` (an agent that
+ * adds an inbox item would hand itself the next sprint) and `docs/vision.md`
+ * (proposals only — the loop never edits the north star). */
+export function feedbackUntouchedErrors(d: FilesDelta): string[] {
+  const errors: string[] = [];
+  for (const filename of createdIn(d)) {
+    errors.push(`${filename} was created; the triage must not write inside docs/feedback/`);
+  }
+  for (const [filename, contentBefore] of d.before) {
+    const contentAfter = d.after.get(filename);
+    if (contentAfter === contentBefore) continue;
+    const what = contentAfter === undefined ? "deleted" : "modified";
+    errors.push(
+      filename.endsWith("vision.md")
+        ? `docs/vision.md was ${what}; propose a vision change in the focus — never apply it`
+        : `${filename} was ${what}; the orchestrator owns docs/feedback/, not the triage`,
+    );
+  }
+  return errors;
+}
+
 // ------------------------------------------------------------------ step C3
 
 export function checkCandidatesStamp(content: string | null, relPath: string): Failure {
-  const empty = checkNonEmpty(content, relPath);
-  if (empty) return empty;
-  const firstLine = (content!.split("\n")[0] ?? "").trim();
-  if (!parseCandidatesStamp(firstLine))
-    return (
-      `expected the first line of ${relPath} to be exactly the candidates stamp ` +
-      `"_Candidates: architecture=<yes|none>, clean-code=<yes|none>, docs=<yes|none>_" ` +
-      `(e.g. "_Candidates: architecture=yes, clean-code=none, docs=yes_"), got "${firstLine}"`
-    );
-  return null;
+  return checkStampShape(
+    content,
+    relPath,
+    parseCandidatesStamp,
+    CANDIDATES_STAMP_SHAPE,
+    CANDIDATES_STAMP_EXAMPLE,
+  );
 }
 
 // ------------------------------------------------------------------ step C4

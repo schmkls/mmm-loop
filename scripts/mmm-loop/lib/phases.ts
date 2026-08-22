@@ -5,6 +5,7 @@
 
 import { firstMissingCategory, parseCandidatesStamp, type CleanupCategory } from "./cleanup.ts";
 import { LoopError } from "./errors.ts";
+import { parseFeedbackStamp } from "./feedback.ts";
 import type { ProjectSnapshot, SprintSnapshot, TicketFile } from "./snapshot.ts";
 import { isClosed, isOpen, needsReview } from "./tickets.ts";
 
@@ -13,6 +14,7 @@ export type Phase =
   | { step: "sprint-focus"; sprintNumber: string; reuseDirName: null }
   /** Step 2 reusing an existing folder that lacks sprint_focus.md. */
   | { step: "sprint-focus"; sprintNumber: string; reuseDirName: string }
+  | { step: "feedback-focus"; sprint: SprintSnapshot }
   | { step: "spec"; sprint: SprintSnapshot }
   | { step: "tickets"; sprint: SprintSnapshot }
   | { step: "cleanup-identify"; sprint: SprintSnapshot }
@@ -70,7 +72,25 @@ export function derivePhase(snapshot: ProjectSnapshot): Phase {
     return deriveTail(snapshot, latest, latest.tickets ?? []);
   }
 
-  if (!latest.hasFocus) {
+  // Feedback branch (spec §6.1): F2 replaces step 2 — it triages the inbox
+  // into the same sprint_focus.md a normal sprint writes, stamped with what
+  // it found. Everything from spec.md on is the shared path below.
+  if (latest.isFeedback) {
+    // F2 is done only once the orchestrator has flipped the stamp to
+    // `triaged=yes`, which it does after archiving the inbox. No focus, a
+    // stamp that does not parse, or one the agent wrote but the
+    // orchestrator never accepted (`triaged=no` — a failed postcondition or
+    // a crash mid-step) all re-run F2, never crash derivation.
+    const stamp = parseFeedbackStamp(latest.focusFirstLine);
+    if (!stamp || stamp.triaged === "no") {
+      return { step: "feedback-focus", sprint: latest };
+    }
+    // Nothing actionable: no spec and no tickets — straight to the shared
+    // tail with zero tickets, like an all-`none` cleanup sprint.
+    if (stamp.actionable === "none") {
+      return deriveTail(snapshot, latest, latest.tickets ?? []);
+    }
+  } else if (!latest.hasFocus) {
     return { step: "sprint-focus", sprintNumber: latest.number, reuseDirName: latest.dirName };
   }
   if (!latest.hasSpec) {

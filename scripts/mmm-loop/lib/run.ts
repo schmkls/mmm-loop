@@ -23,10 +23,11 @@ import {
 } from "./git.ts";
 import { derivePhase } from "./phases.ts";
 import { missingRequiredFiles } from "./scaffold.ts";
-import { readSnapshot, sprintsDir } from "./snapshot.ts";
+import { readFeedbackInbox, readSnapshot, sprintsDir } from "./snapshot.ts";
 import {
   stepCleanupIdentify,
   stepCleanupTickets,
+  stepFeedbackFocus,
   stepImplement,
   stepReport,
   stepReview,
@@ -142,7 +143,16 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
       }
       if (completedThisRun >= maxSprints) {
         if (forceCleanupPending) {
-          console.log("[mmm-loop] --cleanup had no effect: this run created no new sprint");
+          console.log("[mmm-loop] --cleanup had no effect: no cleanup sprint was created this run");
+        }
+        // Feedback waiting when the run stops is invisible otherwise — the
+        // next run is what will handle it (spec §5).
+        const waiting = readFeedbackInbox(ctx.root).length;
+        if (waiting > 0) {
+          console.log(
+            `[mmm-loop] 📮 ${waiting} feedback item${waiting === 1 ? "" : "s"} waiting; ` +
+              `the next run ${waiting === 1 ? "handles it" : "handles them"}`,
+          );
         }
         return;
       }
@@ -154,6 +164,28 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
       // and folder creation idempotent.
       if ((await gitCurrentBranch(ctx.root)) !== sprintBranch(phase.sprintNumber)) {
         await gitCreateBranch(ctx.root, sprintBranch(phase.sprintNumber));
+      }
+
+      // Sprint type (spec §5): a non-empty feedback inbox outranks both
+      // cleanup triggers — it is the freshest human input — and does not
+      // consume a pending --cleanup, which still applies to the next sprint
+      // this run creates. Fresh read, not the snapshot's: the merge above
+      // may have brought in feedback a human committed to the base branch
+      // mid-sprint.
+      const inbox = readFeedbackInbox(ctx.root);
+      if (inbox.length > 0) {
+        mkdirSync(join(sprintsDir(ctx.root), `${phase.sprintNumber}-feedback`), {
+          recursive: true,
+        });
+        console.log(
+          style(
+            "cyan",
+            `[mmm-loop] 📮 sprint ${phase.sprintNumber} will handle feedback ` +
+              `(${inbox.length} item${inbox.length === 1 ? "" : "s"})`,
+            colorEnabled,
+          ),
+        );
+        continue; // re-derive: lands on feedback-focus
       }
 
       // Cleanup sprint creation (spec §6.1): the orchestrator, not an agent,
@@ -199,6 +231,10 @@ export async function run(ctx: Ctx, { maxSprints, forceCleanup }: RunOptions): P
       case "sprint-focus":
         workedOnSprint = phase.reuseDirName;
         await stepSprintFocus(sctx, phase.sprintNumber, phase.reuseDirName);
+        break;
+      case "feedback-focus":
+        workedOnSprint = phase.sprint.dirName;
+        await stepFeedbackFocus(sctx, phase.sprint);
         break;
       case "spec":
         workedOnSprint = phase.sprint.dirName;
@@ -254,6 +290,8 @@ function describe(phase: ReturnType<typeof derivePhase>): string {
       return phase.reuseDirName
         ? `step 2 — sprint focus (reusing ${phase.reuseDirName})`
         : `step 2 — sprint focus (new sprint ${phase.sprintNumber})`;
+    case "feedback-focus":
+      return `step F2 — triage feedback (sprint ${phase.sprint.number})`;
     case "spec":
       return `step 3 — spec (sprint ${phase.sprint.number})`;
     case "tickets":

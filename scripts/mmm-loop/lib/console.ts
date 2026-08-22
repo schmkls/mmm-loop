@@ -42,6 +42,7 @@ export const colorEnabled: boolean =
  */
 export const STEP_EMOJI: Record<StepId, string> = {
   "02-sprint-focus": "🎯",
+  "02-feedback-focus": "📮",
   "03-spec": "📝",
   "03-cleanup-identify": "🧹",
   "04-tickets": "🎫",

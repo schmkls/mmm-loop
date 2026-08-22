@@ -39,3 +39,14 @@ per reviewed ticket, and a review of a fix ticket may never create another.
 A sprint whose folder is exactly `NN-cleanup`, which improves the codebase
 instead of adding features. It has no sprint focus; its spec's candidates
 stamp is the whole plan.
+
+**Feedback sprint**:
+A sprint whose folder is exactly `NN-feedback`, planned from the human
+feedback waiting in `docs/feedback/inbox/` instead of from the vision. Its
+sprint focus carries the feedback stamp and one disposition per item.
+_Avoid_: feedback loop (the whole product is a loop), triage sprint.
+
+**Feedback item**:
+One non-empty `*.md` file directly in `docs/feedback/inbox/`. Human input,
+never written by the loop — the loop only archives it to
+`docs/feedback/handled/NN-<name>.md` once triaged.

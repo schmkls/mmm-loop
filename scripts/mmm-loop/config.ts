@@ -6,6 +6,7 @@
 
 export type StepId =
   | "02-sprint-focus"
+  | "02-feedback-focus"
   | "03-spec"
   | "03-cleanup-identify"
   | "04-tickets"
@@ -33,6 +34,7 @@ export interface StepConfig {
 
 export const STEP_CONFIG: Record<StepId, StepConfig> = {
   "02-sprint-focus": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
+  "02-feedback-focus": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
   "03-spec": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },
   "03-cleanup-identify": { model: "claude-fable-5", effort: "extra", maxTurns: 75 },
   "04-tickets": { model: "claude-fable-5", effort: "extra", maxTurns: 50 },

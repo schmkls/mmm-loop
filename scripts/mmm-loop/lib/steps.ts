@@ -4,15 +4,36 @@
  * lets the orchestrator commit the resulting loop artifacts (spec §6.4).
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runAgentStep } from "./agent.ts";
 import { CLEANUP_CATEGORIES, cleanupCommitType, type CleanupCategory } from "./cleanup.ts";
-import { gitCommitPaths, gitDiffOfCommits, gitHead, gitNewCommits, gitSummaries } from "./git.ts";
+import { colorEnabled, style } from "./console.ts";
+import {
+  emptyInboxFocus,
+  FEEDBACK_DIR,
+  handledName,
+  handledPath,
+  HANDLED_DIR,
+  INBOX_DIR,
+  markTriaged,
+  parseDispositions,
+  parseFeedbackStamp,
+  summarizeDispositions,
+} from "./feedback.ts";
+import {
+  gitCommitPaths,
+  gitDiffOfCommits,
+  gitHead,
+  gitIsIgnored,
+  gitNewCommits,
+  gitSummaries,
+} from "./git.ts";
 import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "./phases.ts";
 import {
   checkCandidatesStamp,
   checkCleanupTickets,
+  checkFeedbackFocus,
   checkImplement,
   checkInitialTickets,
   checkNonEmpty,
@@ -27,6 +48,7 @@ import {
   listDir,
   nonEmptyFile,
   readDirFiles,
+  readFeedbackInbox,
   readRequiredTextFile,
   readSprint,
   readTextFile,
@@ -53,9 +75,26 @@ export interface Ctx {
 }
 
 const REPORT_REL = join("docs", "sprint_reports.html");
+const VISION_REL = join("docs", "vision.md");
 
 function relSprintDir(sprint: { dirName: string }): string {
   return join(".working", "sprints", sprint.dirName);
+}
+
+/** What step F2 must leave exactly as it found it, as one path → contents
+ * map: everything under `docs/feedback/`, and `docs/vision.md` — the
+ * human-authored north star the triage may propose changes to but never
+ * edit (spec §8.9). */
+function readF2ReadOnly(root: string): Map<string, string> {
+  const entries: [string, string][] = [];
+  for (const dir of [FEEDBACK_DIR, INBOX_DIR, HANDLED_DIR]) {
+    for (const [name, content] of readDirFiles(join(root, dir))) {
+      entries.push([join(dir, name), content]);
+    }
+  }
+  const vision = readTextFile(join(root, VISION_REL));
+  if (vision !== null) entries.push([VISION_REL, vision]);
+  return new Map(entries);
 }
 
 function writeTicket(path: string, ticket: Ticket): void {
@@ -99,6 +138,137 @@ export async function stepSprintFocus(
   });
 
   await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprintNumber} focus`, [".working"]);
+}
+
+// --------------------------------------------------------------- step F2
+
+/**
+ * Orchestrator-owned archive (spec §8.9): move each triaged item to
+ * `docs/feedback/handled/NN-<name>.md`, never overwriting a name already
+ * there. Runs after the stamp flip, so a crash here costs at worst a
+ * re-triage of the leftovers in the next feedback sprint — never a triage
+ * the loop forgets it did.
+ */
+function archiveInboxItems(root: string, sprintNumber: string, items: string[]): void {
+  if (items.length === 0) return;
+  const handledDir = join(root, HANDLED_DIR);
+  mkdirSync(handledDir, { recursive: true });
+  for (const item of items) {
+    const from = join(root, INBOX_DIR, item);
+    if (!existsSync(from)) continue; // already gone — nothing to archive
+    renameSync(from, join(root, handledPath(handledName(sprintNumber, item, listDir(handledDir)))));
+  }
+}
+
+/** Undo an agent-written `triaged=yes` on a focus the postcondition
+ * rejected: the flip is the orchestrator's word that F2 finished. */
+function untriage(focusPath: string): void {
+  const content = readTextFile(focusPath);
+  if (content === null) return;
+  const lines = content.split("\n");
+  const stamp = parseFeedbackStamp((lines[0] ?? "").trim());
+  if (stamp?.triaged !== "yes") return;
+  lines[0] = (lines[0] ?? "").trim().replace("triaged=yes", "triaged=no");
+  writeFileSync(focusPath, lines.join("\n"));
+}
+
+export async function stepFeedbackFocus(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
+  const relFocusPath = join(relSprintDir(sprint), "sprint_focus.md");
+  const focusPath = join(ctx.root, relFocusPath);
+  const commit = async () => {
+    // A project may gitignore its feedback; `git add` on an ignored path is
+    // a hard error, and the archive on disk is what matters either way.
+    const track =
+      existsSync(join(ctx.root, FEEDBACK_DIR)) && !(await gitIsIgnored(ctx.root, FEEDBACK_DIR));
+    await gitCommitPaths(ctx.root, `chore(loop): sprint ${sprint.number} feedback focus`, [
+      ".working",
+      ...(track ? [FEEDBACK_DIR] : []),
+    ]);
+  };
+
+  // Fresh read: the boundary decided the sprint type on this inbox, but the
+  // folder is the human's — triage exactly what is in it when F2 runs, and
+  // archive exactly that list afterwards. Read as untrusted: an item that
+  // disappears between the listing and the read is simply not an item.
+  const read = readFeedbackInbox(ctx.root)
+    .map((name) => ({ name, text: (readTextFile(join(ctx.root, INBOX_DIR, name)) ?? "").trim() }))
+    .filter(({ text }) => text.length > 0);
+  const items = read.map(({ name }) => name);
+
+  // Emptied between the boundary and here (the human withdrew the items, or
+  // a crash left the folder behind). Deterministic, so no agent is spawned
+  // to triage nothing — spec §8.9.
+  if (items.length === 0) {
+    writeFileSync(focusPath, emptyInboxFocus(sprint.number));
+    console.log(
+      style(
+        "cyan",
+        `[mmm-loop] 📮 sprint ${sprint.number}: the inbox is empty — nothing to triage`,
+        colorEnabled,
+      ),
+    );
+    await commit();
+    return;
+  }
+
+  // Heading = the bare filename, the same form the focus file must use for
+  // its disposition blocks — so the agent copies rather than transcribes.
+  const feedbackItems = read
+    .map(({ name, text }) => `### ${name}\n\n_${join(INBOX_DIR, name)}_\n\n${text}\n`)
+    .join("\n");
+  const readOnlyBefore = readF2ReadOnly(ctx.root);
+
+  try {
+    await runAgentStep({
+      stepId: "02-feedback-focus",
+      description: ctx.phaseDescription,
+      cwd: ctx.root,
+      bundleDir: ctx.bundleDir,
+      vars: {
+        sprintDir: relSprintDir(sprint),
+        sprintNumber: sprint.number,
+        focusPath: relFocusPath,
+        itemCount: String(items.length),
+        feedbackItems,
+      },
+      check: () =>
+        checkFeedbackFocus(
+          readTextFile(focusPath),
+          { before: readOnlyBefore, after: readF2ReadOnly(ctx.root) },
+          { relPath: relFocusPath, itemNames: items },
+        ),
+    });
+  } catch (e) {
+    // A rejected focus stays on disk for the human to read — but never
+    // wearing the orchestrator's `triaged=yes`, which is the one thing
+    // derivation trusts. An agent that stamped itself done must not make
+    // the next run skip the triage it just failed.
+    untriage(focusPath);
+    throw e;
+  }
+
+  // Orchestrator-owned, in this order (spec §8.9): flip the stamp to
+  // `triaged=yes` — derivation's one signal that F2 is done — then archive,
+  // then commit both. Flipping first means a crash can only cost a
+  // re-triage, never a silently un-archived one.
+  const focus = readRequiredTextFile(focusPath);
+  const lines = focus.split("\n");
+  lines[0] = markTriaged(lines[0] ?? "");
+  writeFileSync(focusPath, lines.join("\n"));
+  archiveInboxItems(ctx.root, sprint.number, items);
+  await commit();
+
+  const dispositions = items.flatMap((name) => parseDispositions(focus).get(name) ?? []);
+  console.log(
+    style(
+      "cyan",
+      `[mmm-loop] 📮 sprint ${sprint.number} feedback: ${summarizeDispositions(dispositions)}` +
+        (dispositions.includes("vision-change")
+          ? " — a vision change is proposed for you in " + relFocusPath
+          : ""),
+      colorEnabled,
+    ),
+  );
 }
 
 // ---------------------------------------------------------------- step 3
@@ -396,6 +566,32 @@ export async function stepUxTickets(ctx: Ctx, sprint: SprintSnapshot): Promise<v
 
 // ---------------------------------------------------------------- step 6
 
+/** The report's sprint-type section for a feedback sprint: the orchestrator
+ * has already parsed the triage, so the agent is told what was decided
+ * rather than asked to find it. */
+function feedbackReportSection(root: string, sprint: SprintSnapshot, ticketCount: number): string {
+  const focus = readTextFile(join(sprintsDir(root), sprint.dirName, "sprint_focus.md")) ?? "";
+  const dispositions = [...parseDispositions(focus).values()].flat();
+  const proposed = dispositions.includes("vision-change");
+  return (
+    `\n## Feedback sprint\n\nSprint ${sprint.number} was a feedback sprint: it was planned from ` +
+    `human feedback, not from the vision. Its \`sprint_focus.md\` triages every item it handled ` +
+    `(${summarizeDispositions(dispositions)}); the items themselves are archived under ` +
+    `\`docs/feedback/handled/${sprint.number}-*.md\`. The section must say, per item, what was ` +
+    `decided and what actually shipped.` +
+    (proposed
+      ? ` This sprint proposes a change to \`docs/vision.md\` (see "## Vision proposals" in the ` +
+        `focus): render it as prominently as a blocked ticket — the run cannot resolve it, only a ` +
+        `human can.`
+      : "") +
+    (ticketCount === 0
+      ? ` This sprint has zero tickets: the triage found nothing actionable — the section must ` +
+        `state exactly that, per item.`
+      : "") +
+    `\n`
+  );
+}
+
 export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void> {
   const reportPath = join(ctx.root, REPORT_REL);
   const htmlBefore = readTextFile(reportPath);
@@ -423,7 +619,9 @@ export async function stepReport(ctx: Ctx, sprint: SprintSnapshot): Promise<void
           `section must state exactly that; it IS the summary.`
         : "") +
       `\n`
-    : "";
+    : sprint.isFeedback
+      ? feedbackReportSection(ctx.root, sprint, (current.tickets ?? []).length)
+      : "";
 
   await runAgentStep({
     stepId: "06-report",

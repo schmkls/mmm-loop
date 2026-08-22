@@ -23,6 +23,12 @@ export type CleanupCategory = (typeof CLEANUP_CATEGORIES)[number]["key"];
 const STAMP_RE =
   /^_Candidates: architecture=(yes|none), clean-code=(yes|none), docs=(yes|none)_$/;
 
+export const CANDIDATES_STAMP_SHAPE =
+  "_Candidates: architecture=<yes|none>, clean-code=<yes|none>, docs=<yes|none>_";
+
+export const CANDIDATES_STAMP_EXAMPLE =
+  "_Candidates: architecture=yes, clean-code=none, docs=yes_";
+
 /**
  * Parse the candidates stamp step C3 writes as spec.md's first line:
  * `_Candidates: architecture=yes, clean-code=none, docs=yes_` — the three

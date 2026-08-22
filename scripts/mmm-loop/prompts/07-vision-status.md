@@ -47,6 +47,14 @@ Rules:
 - Cleanup sprints (folder `NN-cleanup`, no sprint_focus.md) do not advance
   the vision — the content usually carries over, but the stamp must still be
   updated.
+- A vision change proposed by any feedback sprint (folder `NN-feedback`,
+  `## Vision proposals` in its `sprint_focus.md`) belongs under "Blocked on
+  human" — verbatim, and **carried over every sprint**, feedback sprint or
+  not, until `docs/vision.md` reflects it or the human drops the entry. Only
+  a human can edit the vision, so this is the loop's only way to keep asking.
+- Feedback items a triage marked `In this sprint: deferred` belong under
+  "Known gaps": they were archived as handled, so this file is the only
+  place they survive.
 - "Blocked on human" lists tickets with `needs_human_intervention: true` and
   their reasons — or "Nothing.".
 
