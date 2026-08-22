@@ -37,9 +37,12 @@ processes) are used only for the creative work inside each step.
    prompt, and only the files it needs.
 5. **Focused agents** — every prompt states the agent's single purpose and
    exact expected output.
-6. **Self-contained per project** — the loop's scripts and prompts are copied
-   into each target project (ralph-style), so they are visible and freely
-   modifiable per project.
+6. **Self-contained per project** — the whole loop is copied into each target
+   project (ralph-style), no package and no global install, so it is visible
+   and runnable from the project itself. What a project may change is scoped:
+   the `engine/` half is upstream's and is replaced wholesale by `update`,
+   while the `config.ts` and `prompts/` overlay beside it is the project's
+   (§3.1).
 7. **Crash-safe** — the current phase is derived from filesystem state, so the
    loop can be killed and rerun at any point without losing or orphaning work.
    Including branch state: the local `sprint/NN` branch list *is* the state
@@ -47,46 +50,164 @@ processes) are used only for the creative work inside each step.
 
 ## 3. Distribution and installation
 
-The mmm-loop repo contains a copyable bundle at `scripts/mmm-loop/`. To
-install into a target project:
+### 3.1 Engine and overlay
 
-```bash
-cp -r <mmm-loop-repo>/scripts/mmm-loop <target>/scripts/mmm-loop
-```
-
-Then, from the target project root:
-
-```bash
-bun scripts/mmm-loop/loop.ts init   # scaffold required files
-bun scripts/mmm-loop/loop.ts run    # run one sprint
-```
-
-There is no global install and no version coupling: the copy is yours to edit.
-Prompts ship inside the bundle, so per-project prompt tweaks are normal and
-expected.
-
-### Bundle layout (copied into the target project)
+The bundle a project carries at `scripts/mmm-loop/` has two owners, and the
+directory layout is the boundary between them:
 
 ```
 scripts/mmm-loop/
-  loop.ts            # entry point: init | run
-  config.ts          # per-step model / effort / max-turns table (edit freely)
-  lib/               # orchestrator internals (phase derivation, spawn wrapper, ...)
-  prompts/
-    02-sprint-focus.md
-    02-feedback-focus.md
-    03-spec.md
-    03-cleanup-identify.md
-    04-tickets.md
-    04-cleanup-tickets.md
-    05-implement.md
-    05-review.md
-    05.5-ux-plan.md
-    05.5-ux-test.md
-    05.5-ux-tickets.md
-    06-report.md
-    07-vision-status.md
+  loop.ts      # one-line shim: import "./engine/loop.ts"          — upstream's
+  config.ts    # project overrides, Partial<LoopConfig>            — yours
+  prompts/     # project prompt overrides, <step-id>.md            — yours
+  engine/      # everything shipped                                — upstream's
+    loop.ts         # entry point: init | run | version | update | install
+    defaults.ts     # the stock config: STEP_CONFIG, CLEANUP_CADENCE, ...
+    config.ts       # merges ../config.ts over defaults.ts and re-exports
+    VERSION         # the engine's version string, e.g. "v0.1.0 (2026-08-22, abc1234)"
+    lib/            # orchestrator internals (phase derivation, spawn wrapper, ...)
+    prompts/        # the thirteen shipped step prompts (§8)
+      02-sprint-focus.md      02-feedback-focus.md
+      03-spec.md              03-cleanup-identify.md
+      04-tickets.md           04-cleanup-tickets.md
+      05-implement.md         05-review.md
+      05.5-ux-plan.md         05.5-ux-test.md         05.5-ux-tickets.md
+      06-report.md            07-vision-status.md
 ```
+
+**The rule: `engine/` is upstream's. It is deleted and re-copied wholesale by
+`update`, so never edit anything inside it — an edit there is silently thrown
+away at the next update. `config.ts` and `prompts/` beside it are yours, and
+`update` never touches them.**
+
+Both overlays work the same way — the project's file shadows the engine's:
+
+- `config.ts` exports `config: Partial<LoopConfig>`, which `engine/config.ts`
+  deep-merges over `engine/defaults.ts` and re-exports under the same symbol
+  names. An empty object means "stock engine". Unknown top-level keys warn
+  and are ignored: a stale key must never stop a run. Widen the type to
+  `LoopConfigOverlay` to override a single step or a single `RATE_LIMIT`
+  field rather than the whole object.
+- `prompts/<step-id>.md` shadows `engine/prompts/<step-id>.md`, so a project
+  can fork one prompt without forking the engine. `resolvePrompt()` is the
+  only thing that turns a step id into a file, and the path it resolves
+  travels with the content: the banner printed before each spawn and the
+  message printed when a step dies on its postcondition both name the file
+  that was actually read. An override cannot take effect unnoticed.
+
+A forked prompt is the one kind of drift an update cannot fix — it survives
+*because* update leaves the overlay alone, and a fork of an old prompt goes
+on issuing old instructions to a step whose postcondition may have moved.
+`update` therefore names every override whose upstream original changed or
+was removed in the span (§3.2). Fork deliberately, and few.
+
+### 3.2 Installing and updating
+
+A **source** is a repo root — a local path or a URL — whose engine lives at
+`scripts/mmm-loop/engine`. That single convention is what makes install and
+update symmetric: install copies out of a source, update copies in.
+
+```bash
+# from an mmm-loop checkout: create the bundle in a project that has none
+bun scripts/mmm-loop/loop.ts install <target>
+
+# then, from the target project root
+bun scripts/mmm-loop/loop.ts init      # scaffold required files (§5)
+bun scripts/mmm-loop/loop.ts run       # run one sprint
+```
+
+`install` writes exactly the four bundle items: the shim, `engine/`, a starter
+`config.ts` with `source` pinned to where it was installed from, and an empty
+`prompts/`. It creates nothing under `docs/` or `.working/` — that is `init`'s
+job, run by a human afterwards. It refuses when a bundle already exists;
+moving an existing one forward is what `update` is for.
+
+```bash
+bun scripts/mmm-loop/loop.ts update                    # dry run: what would change
+bun scripts/mmm-loop/loop.ts update --apply            # replace engine/
+bun scripts/mmm-loop/loop.ts update --from ../mmm-loop # override the pinned source
+```
+
+`update` replaces `engine/` wholesale from the pinned source and leaves every
+other bundle item alone. It prints the file-level diff, any stale prompt
+overrides, the source's `CHANGELOG.md` upgrade notes for the span (§3.4), and
+any scaffold files a newer engine would add. Three properties make it safe to
+run without much ceremony:
+
+- **Dry run by default.** `--apply` is the only thing that writes.
+- **Two refusals.** The bundle must be clean going in, so an applied update
+  is exactly one diff a human can read and `git checkout` can undo; and no
+  `sprint/NN` branch may exist, because swapping the engine under a running
+  sprint changes the rules mid-game.
+- **It never runs `init`.** A new engine may scaffold files this project
+  lacks; update names them and stops there. Creating project files is a
+  human's decision, not an update's side effect.
+
+`version` answers "which engine is this, and how far has this project
+drifted?" in one line — the engine version plus the size of the two overlays:
+
+```
+v0.1.0 (2026-08-22, abc1234) (engine) · 1 prompt override · 2 config overrides
+```
+
+### 3.3 The state contract
+
+Everything the loop reads back off disk to decide what to do next is a
+**compatibility surface**, because a project's existing sprints are written
+against it. Named exactly, the state contract is:
+
+1. **Sprint folder names** — `NN-slug` (§4), and the reserved slugs
+   `NN-cleanup` (§8.8) and `NN-feedback` (§8.9) that select a sprint type.
+2. **The ticket JSON schema** — the field set, types and ownership of §8.4,
+   and the `NNN-slug.json` / `NNN.1-slug.json` filename ordering.
+3. **The stamps** — the machine-readable markers phase derivation (§6.1)
+   parses:
+   - `_Last updated: sprint NN_` — first line of `.working/vision_status.md`
+   - `_Ticketized: no|yes_` — first line of `ux_findings.md`
+   - `_Candidates: architecture=…, clean-code=…, docs=…_` — first line of a
+     cleanup sprint's `spec.md`
+   - `_Feedback: triaged=…, actionable=…, vision-change=…_` — first line of a
+     feedback sprint's `sprint_focus.md`
+   - `<section id="sprint-NN">` — the per-sprint section in
+     `docs/sprint_reports.html`
+
+The promise about it:
+
+> The state contract changes only in a minor release, always with an Upgrade
+> note in `CHANGELOG.md`, and never in a way that breaks a sprint already in
+> progress.
+
+"Never breaks a sprint in progress" is the operative half. A project may
+update between sprints and find its half-finished folders still derive to the
+same next step; if a release ever needs an in-place change to existing files,
+its upgrade note says so explicitly and `update`'s in-flight-sprint refusal
+(§3.2) is what keeps it from happening mid-sprint. Everything else — internal
+module layout, prompt wording, console output, exit-code *messages* — is not
+contract and may change in any release.
+
+### 3.4 Versioning policy
+
+Releases are [semver](https://semver.org) with a leading `v`, currently in
+`0.y.z`: major version zero, so the public surface is still being proven.
+
+| Bump | Means |
+|---|---|
+| **patch** (`0.1.0 → 0.1.1`) | fixes only — no new features, no state-contract change, no new config keys |
+| **minor** (`0.1.0 → 0.2.0`) | new features or steps, and any additive state-contract change; always ships an **Upgrade notes** entry in `CHANGELOG.md` |
+| **`1.0.0`** | when the state contract has survived several consumers unchanged — the point at which it is worth promising stability |
+
+`CHANGELOG.md` at the repo root carries one `##` section per release, newest
+first, each ending in `### Upgrade notes`. `update` parses that file out of
+the source and prints the notes for the exact span it is jumping, so upgrade
+notes are written for the person running the update.
+
+The engine's version string lives in `scripts/mmm-loop/engine/VERSION` as
+`vX.Y.Z (YYYY-MM-DD, <sha>)`, stamped in the release commit that the tag
+points at. It is read by `version`, by `install`, and by both ends of
+`update`; a missing or empty file reads as `(unknown)` and is never an error.
+There is no run-time version floor — a project's engine is whatever its
+`engine/` directory contains, and the update-time notes are the only
+coupling.
 
 ## 4. Target project layout
 
@@ -166,7 +287,7 @@ sprint** (§8.8):
   prints a notice saying so. (On a blocked exit-2 run the notice is
   skipped — state is derivable; just pass the flag again.) Subsequent
   sprints in the same run follow the cadence rule.
-- **Cadence**: `CLEANUP_CADENCE` in `config.ts` (the spec name is
+- **Cadence**: `CLEANUP_CADENCE` in the config (the spec name is
   `cleanupCadence`; default `3`, `0` = disabled). A newly created sprint `NN`
   is a cleanup sprint iff `NN % cadence === 0` — stateless, derivable from
   the sprint number alone. The default gives sprints 03, 06, 09, …
@@ -185,7 +306,8 @@ is skipped rather than deferred.
 
 ### Allowed Claude user
 
-`config.ts` can pin `run` to one Claude account:
+The config can pin `run` to one Claude account. `engine/defaults.ts`
+declares it; a project sets it in its own `config.ts` overlay (§3.1):
 
 ```ts
 /**
@@ -334,8 +456,8 @@ actually completed (exit 0 → postcondition checked). A zero exit is never
 classified, however limit-like its output looks. After `maxConsecutiveWaits`
 consecutive rate-limited attempts of one step, exit 1 naming the step and
 the count. Killing the process mid-wait is safe as always: no waiting state
-is persisted; a rerun derives the same step. Knobs: `RATE_LIMIT` in
-`config.ts` (§7).
+is persisted; a rerun derives the same step. Knobs: `RATE_LIMIT` (§7), overridable per
+project (§3.1).
 
 ### 6.4 Git conventions
 
@@ -347,7 +469,7 @@ is persisted; a rerun derives the same step. Knobs: `RATE_LIMIT` in
     sprints included; no slug, because for normal sprints the slug is chosen
     by the step-2 agent *after* the branch must exist). `^sprint/\d{2}$` is
     a reserved namespace; humans must not create branches matching it.
-  - **Base branch**: `BASE_BRANCH` in `config.ts` (default `"main"`).
+  - **Base branch**: `BASE_BRANCH` in the config (default `"main"`).
     Sprint branches are created from its HEAD at the new-sprint boundary
     (the same place that decides sprint type, §6.1), **before** any agent or
     folder-creation runs for the sprint, and merged back into it. A config
@@ -415,14 +537,19 @@ Every agent step spawns a fresh process:
 claude -p --dangerously-skip-permissions --model <model> --max-turns <n> < filled-prompt
 ```
 
-- **Prompts** are markdown templates in `scripts/mmm-loop/prompts/`, filled by
-  the orchestrator with concrete values (sprint path, ticket path, sprint
-  number, ...). Every prompt states: the agent's single purpose, its inputs,
-  its exact expected output (files and format), and what NOT to do.
+- **Prompts** are markdown templates shipped at
+  `scripts/mmm-loop/engine/prompts/<step-id>.md`, optionally shadowed by
+  `scripts/mmm-loop/prompts/<step-id>.md` (§3.1), and filled by the
+  orchestrator with concrete values (sprint path, ticket path, sprint number,
+  ...). Every prompt states: the agent's single purpose, its inputs, its exact
+  expected output (files and format), and what NOT to do. The step banner
+  prints the path that was actually resolved.
 - **Permissions**: `--dangerously-skip-permissions` — the honest name for
-  what autonomous means. (If too spicy for a given project, edit the copied
-  `config.ts` to use `--permission-mode acceptEdits` plus an allowlist.)
-- **Model/effort/max-turns** per step live in `config.ts`:
+  what autonomous means. (If too spicy for a given project, set
+  `PERMISSION_ARGS` in the project's `config.ts` overlay to
+  `--permission-mode acceptEdits` plus an allowlist.)
+- **Model/effort/max-turns** per step live in `engine/defaults.ts`, and a
+  project overrides them from its own `config.ts` (§3.1):
 
 | Step | Model (default) | Effort | max-turns (default) |
 |------|-----------------|--------|---------------------|
@@ -446,7 +573,7 @@ flag/setting for effort depends on the installed Claude Code version — the
 spawn wrapper owns that translation. All values are per-project editable.
 
 Rate/usage-limit handling (§6.3) is configured by one grouped constant in
-`config.ts`:
+`engine/defaults.ts`, overridable per project (§3.1):
 
 ```ts
 export const RATE_LIMIT = {

@@ -28,8 +28,15 @@ export interface ChangelogSection {
   body: string;
 }
 
+/**
+ * A version string reduced to the part that can be compared with a heading's.
+ * `engine/VERSION` carries provenance as well as the number
+ * (`v0.1.0 (2026-08-22, abc1234)`), so match on the first version token in
+ * it; anything with no token at all compares as itself.
+ */
 function normalize(version: string): string {
-  return version.replace(/^v/i, "").toLowerCase();
+  const found = version.match(VERSION_RE);
+  return (found?.[0] ?? version).replace(/^v/i, "").toLowerCase();
 }
 
 /** Split a CHANGELOG into its `##` sections, in file order (newest first).

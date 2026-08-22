@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { formatVersionLine } from "../scripts/mmm-loop/engine/lib/version.ts";
-import { cleanup, installedRepo, runBundle } from "./bundle-helpers.ts";
+import { cleanup, ENGINE_VERSION, installedRepo, runBundle } from "./bundle-helpers.ts";
 import { REPO_ROOT } from "./helpers.ts";
 
 const temps: string[] = [];
@@ -24,7 +24,9 @@ describe("version", () => {
   test("in this repo: the engine version and a stock overlay", () => {
     const r = runBundle(REPO_ROOT, ["version"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim()).toBe("v0.0.0-dev (engine) · 0 prompt overrides · 0 config overrides");
+    expect(r.stdout.trim()).toBe(
+      `${ENGINE_VERSION} (engine) · 0 prompt overrides · 0 config overrides`,
+    );
   });
 
   test("a fresh install reports its one config key — the source pin", () => {
@@ -32,7 +34,9 @@ describe("version", () => {
     temps.push(root);
     const r = runBundle(root, ["version"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.trim()).toBe("v0.0.0-dev (engine) · 0 prompt overrides · 1 config override");
+    expect(r.stdout.trim()).toBe(
+      `${ENGINE_VERSION} (engine) · 0 prompt overrides · 1 config override`,
+    );
   });
 
   test("counts prompt overrides — .md files only, not the .gitkeep", () => {
@@ -43,7 +47,7 @@ describe("version", () => {
     writeFileSync(join(prompts, "05-implement.md"), "# override\n");
     writeFileSync(join(prompts, "notes.txt"), "not a prompt\n");
     expect(runBundle(root, ["version"]).stdout.trim()).toBe(
-      "v0.0.0-dev (engine) · 2 prompt overrides · 1 config override",
+      `${ENGINE_VERSION} (engine) · 2 prompt overrides · 1 config override`,
     );
   });
 

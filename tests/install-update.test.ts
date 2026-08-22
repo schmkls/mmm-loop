@@ -9,6 +9,7 @@ import {
   bundleSnapshot,
   cleanup,
   commitAll,
+  ENGINE_VERSION,
   gitStatus,
   installedRepo,
   runBundle,
@@ -50,7 +51,7 @@ describe("install", () => {
     expect(readFileSync(join(bundle, "loop.ts"), "utf8")).toBe(SHIM);
     expect(existsSync(join(bundle, "engine", "loop.ts"))).toBe(true);
     expect(existsSync(join(bundle, "engine", "lib", "run.ts"))).toBe(true);
-    expect(readFileSync(join(bundle, "engine", "VERSION"), "utf8").trim()).toBe("v0.0.0-dev");
+    expect(readFileSync(join(bundle, "engine", "VERSION"), "utf8").trim()).toBe(ENGINE_VERSION);
     // prompts/ exists and holds no overrides.
     expect(existsSync(join(bundle, "prompts", ".gitkeep"))).toBe(true);
     expect(existsSync(join(bundle, "prompts", "03-spec.md"))).toBe(false);
@@ -176,7 +177,7 @@ describe("update — dry run", () => {
 
     const r = runBundle(root, ["update", "--from", src]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("v0.0.0-dev → v0.9.9");
+    expect(r.stdout).toContain(`${ENGINE_VERSION} → v0.9.9`);
     expect(r.stdout).toContain("+ engine/lib/_added.ts");
     expect(r.stdout).toContain("~ engine/VERSION");
     expect(r.stdout).toContain("--apply");
@@ -203,7 +204,7 @@ describe("update — dry run", () => {
     const root = track(installedRepo());
     const src = track(sourceRepo({ version: "v0.9.9", changelog: CHANGELOG }));
     const out = runBundle(root, ["update", "--from", src]).stdout;
-    expect(out).toContain("upgrade notes (v0.0.0-dev → v0.9.9)");
+    expect(out).toContain(`upgrade notes (${ENGINE_VERSION} → v0.9.9)`);
     expect(out).toContain("- move X to Y");
     expect(out).not.toContain("Initial.");
   });
@@ -346,6 +347,28 @@ No notes here.
 `;
     expect(upgradeNotes(log, "v0.0.0-dev", "v0.1.0")).toContain("- move X to Y");
   });
+
+  test("upgradeNotes: a stamped VERSION matches a bare heading", () => {
+    const log = `# Changelog
+
+## v0.2.0
+
+### Upgrade notes
+
+- two
+
+## c324ef3 → v0.1.0
+
+### Upgrade notes
+
+- one
+`;
+    // engine/VERSION carries the release date and sha as well as the number;
+    // the span must still start after the release the project is already on.
+    const span = upgradeNotes(log, "v0.1.0 (2026-08-22, abc1234)", "v0.2.0");
+    expect(span).toContain("- two");
+    expect(span).not.toContain("- one");
+  });
 });
 
 describe("update — url sources", () => {
@@ -384,7 +407,7 @@ describe("update — url sources", () => {
     commitAll(root, "chore: pin a ref");
     const r = runBundle(root, ["update"]);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("v0.0.0-dev → v0.9.9");
+    expect(r.stdout).toContain(`${ENGINE_VERSION} → v0.9.9`);
   });
 
   test("a bad ref fails with git's own message", () => {

@@ -5,8 +5,14 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { listFiles } from "../scripts/mmm-loop/engine/lib/bundle.ts";
+import { listFiles, readEngineVersion } from "../scripts/mmm-loop/engine/lib/bundle.ts";
 import { LOOP_TS, REPO_ROOT, sh } from "./helpers.ts";
+
+/** This repo's own engine version, read rather than hardcoded: it changes in
+ * every release commit, and no test here is about its literal value. */
+export const ENGINE_VERSION = readEngineVersion(
+  join(REPO_ROOT, "scripts", "mmm-loop", "engine"),
+);
 
 /** An empty git repo with one commit, ready to install into. `realpathSync`
  * because macOS temp dirs are symlinks and the loop reports real paths. */

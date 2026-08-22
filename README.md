@@ -24,8 +24,9 @@ repository with at least one commit on `main` (or whatever `BASE_BRANCH`
 names) checked out.
 
 ```bash
-# 1. Copy the bundle in — no package, no global install; the copy is yours to edit
-cp -r <this-repo>/scripts/mmm-loop <your-project>/scripts/mmm-loop
+# 1. Install the bundle — no package, no global install
+#    (from a checkout of this repo; it pins <this-repo> as the update source)
+bun scripts/mmm-loop/loop.ts install <your-project>
 cd <your-project>
 
 # 2. Scaffold the files the loop needs (never overwrites existing files)
@@ -397,30 +398,110 @@ message when it carries one, prints a single line saying how long it will
 wait and when it resumes, sleeps, and re-runs the same attempt — without
 consuming the postcondition retry. Killing the process during the wait loses
 nothing (rerun and it derives the same step). The knobs live in the
-`RATE_LIMIT` constant in `scripts/mmm-loop/config.ts`; the env vars
+`RATE_LIMIT` value, overridable in `scripts/mmm-loop/config.ts`; the env vars
 `MMM_LOOP_RL_DEFAULT_WAIT_MS` and `MMM_LOOP_RL_RESET_MARGIN_MS` override the
 waits for one-off runs.
 
+## Engine and overlay
+
+The bundle inside your project has two halves, and the directory layout is
+the line between them:
+
+```
+scripts/mmm-loop/
+  loop.ts      # one-line shim into the engine        — upstream's
+  config.ts    # your config overrides                — yours
+  prompts/     # your step-prompt overrides           — yours
+  engine/      # everything shipped, incl. VERSION,
+               # lib/ and the stock prompts/          — upstream's
+```
+
+**`engine/` is upstream's: `update` deletes and re-copies it wholesale, so
+never edit anything inside it — your change is thrown away at the next
+update. `config.ts` and `prompts/` beside it are yours, and `update` never
+touches them.** Both are overlays: your file shadows the engine's.
+
+```bash
+bun scripts/mmm-loop/loop.ts version           # which engine, and how far you've drifted
+bun scripts/mmm-loop/loop.ts update            # dry run: what a new engine would change
+bun scripts/mmm-loop/loop.ts update --apply    # replace engine/ (one reviewable commit)
+```
+
+`update` fetches from the `source` your install pinned in `config.ts`
+(`--from <path-or-url>` overrides it), prints the file-level diff and the
+upgrade notes for the span, and refuses when the bundle has uncommitted
+changes or a `sprint/NN` branch is in flight. It never runs `init` — it names
+any new scaffold files and leaves creating them to you.
+
 ## Tuning
 
-All knobs live in the copy inside your project:
+All knobs live in `scripts/mmm-loop/config.ts` — the overlay in your project.
+It exports one object that is deep-merged over the engine's
+`engine/defaults.ts`, so an empty object means "stock engine" and you only
+write down what you actually changed:
 
-- **`scripts/mmm-loop/config.ts`** — per-step model, reasoning effort, and
-  max turns (defaults: Fable 5 at max effort for planning/implement/review,
-  Haiku for the mechanical vision-status rewrite), the cleanup-sprint cadence
-  (`CLEANUP_CADENCE`, default every 3rd sprint), the base branch that sprint
-  branches are created from and merged into (`BASE_BRANCH`, default `main`),
-  plus the permission flags passed to `claude`. The default is
-  `--dangerously-skip-permissions`; swap in `--permission-mode acceptEdits`
-  and an allowlist if that's too spicy for a project.
-- **`ALLOWED_CLAUDE_USER`** (also in `config.ts`) — pin the loop to one
-  Claude account: when set to an email, a run aborts at startup unless that
-  account is logged in (case-insensitive), so an overnight run can't bill
-  the wrong subscription. Default `null` = accept any account. The
-  `MMM_LOOP_ALLOWED_CLAUDE_USER` env var overrides per run (empty string =
-  accept any).
-- **`scripts/mmm-loop/prompts/*.md`** — the thirteen step prompts. Editing
-  them per project is normal and expected.
+```ts
+import type { LoopConfig } from "./engine/defaults.ts";
+
+export const config: Partial<LoopConfig> = {
+  source: { from: "github.com/schmkls/mmm-loop" },
+  BASE_BRANCH: "master",
+  ALLOWED_CLAUDE_USER: "you@example.com",
+};
+```
+
+(Widen the type to `LoopConfigOverlay` when you want to override a single
+step or a single `RATE_LIMIT` field rather than the whole object. Unknown
+keys warn and are ignored, so a stale one never stops a run.)
+
+- **`STEP_CONFIG`** — per-step model, reasoning effort, and max turns
+  (defaults: Fable 5 at max effort for planning/implement/review, Haiku for
+  the mechanical vision-status rewrite).
+- **`CLEANUP_CADENCE`** — the cleanup-sprint cadence, default every 3rd
+  sprint; `0` disables.
+- **`BASE_BRANCH`** — the branch sprint branches are created from and merged
+  into, default `main`.
+- **`PERMISSION_ARGS`** — the permission flags passed to `claude`. The
+  default is `--dangerously-skip-permissions`; swap in `--permission-mode
+  acceptEdits` and an allowlist if that's too spicy for a project.
+- **`ALLOWED_CLAUDE_USER`** — pin the loop to one Claude account: when set to
+  an email, a run aborts at startup unless that account is logged in
+  (case-insensitive), so an overnight run can't bill the wrong subscription.
+  Default `null` = accept any account. The `MMM_LOOP_ALLOWED_CLAUDE_USER` env
+  var overrides per run (empty string = accept any).
+- **`RATE_LIMIT`** — the usage-limit wait knobs (see above).
+- **`source`** — where `update` fetches a new engine from; written by
+  `install`.
+
+To change a step's prompt, copy it out of
+`scripts/mmm-loop/engine/prompts/<step-id>.md` into
+`scripts/mmm-loop/prompts/<step-id>.md` and edit that copy — it shadows the
+engine's, and `update` leaves it alone. That last part is also the catch: a
+fork keeps issuing its old instructions to a step whose postcondition may
+have moved, so `update` names every override whose upstream original changed,
+and it is worth forking few. The step banner always prints the prompt path it
+actually resolved, so an override is never silent.
+
+## Versioning policy
+
+Releases are [semver](https://semver.org) with a leading `v`, currently
+`0.y.z` — major version zero, so the surface is still being proven.
+
+- **patch** (`0.1.0 → 0.1.1`) — fixes only. No new features, no state-contract
+  change, no new config keys.
+- **minor** (`0.1.0 → 0.2.0`) — new features or steps, and any additive change
+  to the state contract. Always ships an **Upgrade notes** entry in
+  [CHANGELOG.md](CHANGELOG.md), which is what `update` prints for you.
+- **`1.0.0`** — when the state contract has survived several consumers
+  unchanged.
+
+The **state contract** is the on-disk surface your existing sprints are
+written against: sprint folder names (including the reserved `NN-cleanup` and
+`NN-feedback` slugs), the ticket JSON schema, and the stamps the loop parses
+(`_Last updated: sprint NN_`, `_Ticketized:_`, `_Candidates:_`, `_Feedback:_`,
+`<section id="sprint-NN">`). It changes only in a minor release, always with a
+migration note, and never in a way that breaks a sprint already in progress —
+see [docs/specification.md §3.3](docs/specification.md#33-the-state-contract).
 
 ## Developing mmm-loop itself
 
