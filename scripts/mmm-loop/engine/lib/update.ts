@@ -13,6 +13,10 @@
  *  - **It never runs `init`.** A new engine may scaffold files this project
  *    lacks; update says so and stops there. Creating project files is a
  *    human's decision, not an update's side effect.
+ *
+ * It also warns about stale prompt overrides (see `staleOverrides`) — the one
+ * kind of drift that survives an update *because* update leaves the overlay
+ * alone, and the only one that can quietly break a postcondition afterwards.
  */
 
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -23,8 +27,12 @@ import {
   BUNDLE_REL,
   bundleRootOf,
   engineDirOfSource,
+  enginePromptRel,
   listFiles,
+  promptOverrides,
   readEngineVersion,
+  resolvePrompt,
+  stepIdOfPromptFile,
 } from "./bundle.ts";
 import { upgradeNotes } from "./changelog.ts";
 import { LoopError } from "./errors.ts";
@@ -120,6 +128,27 @@ export function diffEngines(oldDir: string, newDir: string): EngineDiff {
 
 export function isEmptyDiff(d: EngineDiff): boolean {
   return d.added.length === 0 && d.removed.length === 0 && d.changed.length === 0;
+}
+
+// -------------------------------------------------------- stale overrides
+
+/**
+ * Which of a project's prompt overrides shadow an upstream prompt that moves
+ * in this span — the `.md` filenames, sorted.
+ *
+ * Update deliberately replaces only `engine/`, so an override keeps working
+ * afterwards exactly as written. That is the point, and also the hazard: when
+ * the engine rewrites its own copy of a prompt the project forked, the fork
+ * silently goes on issuing the old instructions to a step whose postcondition
+ * may now expect something else. Nothing downstream can detect that — the run
+ * just fails oddly, two steps later — so this is the moment to say it.
+ *
+ * `removed` counts as well as `changed`: an override shadowing a prompt the
+ * new engine no longer ships is the same stale fork, one step further gone.
+ */
+export function staleOverrides(overrides: string[], diff: EngineDiff): string[] {
+  const moved = new Set([...diff.changed, ...diff.removed]);
+  return overrides.filter((file) => moved.has(enginePromptRel(file))).sort();
 }
 
 // ------------------------------------------------------------------ scaffold
@@ -230,6 +259,7 @@ export async function update({
         `${diff.changed.length} changed`,
     );
 
+    printStaleOverrides(engineDir, staleOverrides(promptOverrides(bundleRoot), diff), diff);
     printUpgradeNotes(sourceRoot, oldVersion, newVersion);
 
     const missing = await missingScaffoldFiles(newEngine, root);
@@ -251,6 +281,24 @@ export async function update({
   } finally {
     cleanup();
   }
+}
+
+/** Name every stale override and the upstream file it shadows, one line each
+ * — before the upgrade notes, and on dry runs too, since deciding whether to
+ * apply is exactly when a human wants to know which fork is going stale. */
+function printStaleOverrides(engineDir: string, stale: string[], diff: EngineDiff): void {
+  if (stale.length === 0) return;
+  console.log(`[mmm-loop] ⚠ prompt overrides shadowing a prompt this update touches:`);
+  for (const file of stale) {
+    const rel = enginePromptRel(file);
+    const fate = diff.removed.includes(rel) ? "removed" : "changed";
+    const overlay = resolvePrompt(engineDir, stepIdOfPromptFile(file)).display;
+    console.log(`    ${overlay}  (engine/${rel} ${fate} upstream)`);
+  }
+  console.log(
+    `    update leaves overrides alone, so these keep the old instructions — ` +
+      `re-apply your edits on top of the new engine prompt.`,
+  );
 }
 
 /** The source's upgrade notes for the span, when it ships a CHANGELOG. Its

@@ -3,7 +3,8 @@
  * ANSI helper — no dependencies. The format functions are pure (description,
  * step config, attempt, and a `color` flag in; string out); `colorEnabled`
  * is the single once-computed environment read. Strictly cosmetic by
- * contract: nothing here touches prompts, agent output, or timing.
+ * contract: it reads no file and re-derives no path — the resolved prompt
+ * arrives as a string — and it never touches agent output or timing.
  */
 
 import type { StepConfig, StepId } from "../config.ts";
@@ -68,6 +69,13 @@ export interface BannerInput {
    */
   description: string;
   config: StepConfig;
+  /**
+   * The prompt file the step will actually be given, repo-relative — from
+   * `resolvePrompt`, never rebuilt here. Printing the *resolved* path is what
+   * makes a project override visible on every single run instead of only when
+   * someone goes looking for it.
+   */
+  promptPath: string;
   /** 1 on the first run; 2 on the §6.3 retry, which reprints the banner. */
   attempt: 1 | 2;
   color: boolean;
@@ -79,7 +87,14 @@ export interface BannerInput {
  * output visually dominates between banners. Without color the rules are
  * dropped — piped output stays line-oriented and grep-friendly.
  */
-export function formatStepBanner({ stepId, description, config, attempt, color }: BannerInput): string {
+export function formatStepBanner({
+  stepId,
+  description,
+  config,
+  promptPath,
+  attempt,
+  color,
+}: BannerInput): string {
   // Display the effective CLI effort; agent.ts owns the flag translation
   // ("extra" → `--effort max`, "default" → no flag).
   const effort = config.effort === "extra" ? "max" : "default";
@@ -89,7 +104,7 @@ export function formatStepBanner({ stepId, description, config, attempt, color }
   const lines = [
     title,
     `   ${style("dim", `agent: ${config.model} · effort ${effort} · ≤${config.maxTurns} turns`, color)}`,
-    `   ${style("dim", `prompt: scripts/mmm-loop/prompts/${stepId}.md`, color)}`,
+    `   ${style("dim", `prompt: ${promptPath}`, color)}`,
   ];
   if (color) {
     const rule = style("dim", RULE, color);

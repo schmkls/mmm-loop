@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { STEP_CONFIG, type StepId } from "../scripts/mmm-loop/engine/defaults.ts";
+import { resolvePrompt } from "../scripts/mmm-loop/engine/lib/bundle.ts";
 import {
   formatDuration,
   formatStepBanner,
@@ -11,7 +12,7 @@ import {
   STEP_EMOJI,
   style,
 } from "../scripts/mmm-loop/engine/lib/console.ts";
-import { makeProject, runLoop } from "./helpers.ts";
+import { ENGINE_DIR, makeProject, runLoop } from "./helpers.ts";
 
 const ESC = "\u001b";
 
@@ -38,6 +39,7 @@ describe("formatStepBanner", () => {
     stepId: "05-implement" as StepId,
     description,
     config: STEP_CONFIG["05-implement"],
+    promptPath: "scripts/mmm-loop/engine/prompts/05-implement.md",
     attempt: 1 as const,
   };
 
@@ -45,8 +47,18 @@ describe("formatStepBanner", () => {
     expect(formatStepBanner({ ...input, color: false })).toBe(
       "🔨 phase: step 5.1 — implement 001-toy-part-1.json (sprint 01)\n" +
         "   agent: claude-fable-5 · effort max · ≤150 turns\n" +
-        "   prompt: scripts/mmm-loop/prompts/05-implement.md",
+        "   prompt: scripts/mmm-loop/engine/prompts/05-implement.md",
     );
+  });
+
+  test("prints the resolved path verbatim — an override is visible on the banner", () => {
+    const overridden = formatStepBanner({
+      ...input,
+      promptPath: "scripts/mmm-loop/prompts/05-implement.md",
+      color: false,
+    });
+    expect(overridden).toContain("prompt: scripts/mmm-loop/prompts/05-implement.md");
+    expect(overridden).not.toContain("engine/prompts");
   });
 
   test("with color: framed by ── rules, bold title keeps the describe() text contiguous", () => {
@@ -72,11 +84,12 @@ describe("formatStepBanner", () => {
       stepId: "06-report",
       description: "step 6 — report (sprint 01)",
       config: STEP_CONFIG["06-report"],
+      promptPath: "scripts/mmm-loop/engine/prompts/06-report.md",
       attempt: 1,
       color: false,
     });
     expect(banner).toContain("agent: claude-fable-5 · effort default · ≤75 turns");
-    expect(banner).toContain("prompt: scripts/mmm-loop/prompts/06-report.md");
+    expect(banner).toContain("prompt: scripts/mmm-loop/engine/prompts/06-report.md");
   });
 });
 
@@ -133,7 +146,8 @@ describe("e2e console output", () => {
     for (const id of ranStepIds) {
       expect(r.stdout).toContain(`${STEP_EMOJI[id]} phase: step `);
       expect(r.stdout).toContain(`agent: ${STEP_CONFIG[id].model} · effort `);
-      expect(r.stdout).toContain(`prompt: scripts/mmm-loop/prompts/${id}.md`);
+      expect(r.stdout).toContain(`prompt: ${resolvePrompt(ENGINE_DIR, id).display}`);
+      expect(r.stdout).toContain(`prompt: scripts/mmm-loop/engine/prompts/${id}.md`);
     }
 
     // One ✓ outcome line per banner (no retries on the happy path).

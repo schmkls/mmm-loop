@@ -7,8 +7,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { PERMISSION_ARGS, STEP_CONFIG, type Effort, type StepId } from "../config.ts";
+import { resolvePrompt } from "./bundle.ts";
 import { colorEnabled, formatStepBanner, formatStepDone, style } from "./console.ts";
 import { LoopError } from "./errors.ts";
 import { computeWaitMs, detectRateLimit, effectiveRateLimitConfig } from "./ratelimit.ts";
@@ -41,7 +41,9 @@ export interface AgentStep {
   check: () => string | null | Promise<string | null>;
   /** Project root — the agent's working directory. */
   cwd: string;
-  /** The scripts/mmm-loop directory (where prompts/ lives). */
+  /** The engine directory — `scripts/mmm-loop/engine`. `resolvePrompt` reads
+   * the step's prompt relative to it, letting the project's `prompts/` next
+   * door shadow the one this engine shipped. */
   bundleDir: string;
 }
 
@@ -163,7 +165,8 @@ async function spawnWithRateLimitWaits(step: AgentStep, prompt: string): Promise
 }
 
 export async function runAgentStep(step: AgentStep): Promise<void> {
-  const template = readFileSync(join(step.bundleDir, "prompts", `${step.stepId}.md`), "utf8");
+  const promptFile = resolvePrompt(step.bundleDir, step.stepId);
+  const template = readFileSync(promptFile.path, "utf8");
   const prompt = fillTemplate(template, step.vars);
   const description = step.description ?? `step ${step.stepId}`;
   const banner = (attempt: 1 | 2) =>
@@ -172,6 +175,7 @@ export async function runAgentStep(step: AgentStep): Promise<void> {
         stepId: step.stepId,
         description,
         config: STEP_CONFIG[step.stepId],
+        promptPath: promptFile.display,
         attempt,
         color: colorEnabled,
       }),
@@ -196,7 +200,7 @@ export async function runAgentStep(step: AgentStep): Promise<void> {
     if (failure !== null) {
       throw new LoopError(
         `Step ${step.stepId} failed its postcondition twice. Last failure:\n${failure}\n` +
-          `A human should look at the prompt (scripts/mmm-loop/prompts/${step.stepId}.md) or the project state.`,
+          `A human should look at the prompt (${promptFile.display}) or the project state.`,
       );
     }
   }

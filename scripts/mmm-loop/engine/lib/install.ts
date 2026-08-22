@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import {
   BUNDLE_REL,
   bundleRootOf,
+  overlayPromptsDir,
   readEngineVersion,
   repoRootOf,
   SHIM,
@@ -51,8 +52,8 @@ export function install({ engineDir, target, cwd }: InstallOptions): void {
   writeFileSync(join(destBundle, "config.ts"), starterOverlay(sourceRoot));
   // `.gitkeep` so the empty override directory survives a commit; it is a
   // dotfile, so it never counts as an override.
-  mkdirSync(join(destBundle, "prompts"), { recursive: true });
-  writeFileSync(join(destBundle, "prompts", ".gitkeep"), "");
+  mkdirSync(overlayPromptsDir(destBundle), { recursive: true });
+  writeFileSync(join(overlayPromptsDir(destBundle), ".gitkeep"), "");
 
   console.log(
     `[mmm-loop] installed ${readEngineVersion(engineDir)} into ${join(targetRoot, BUNDLE_REL)}`,
