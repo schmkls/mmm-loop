@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { readSprint } from "../scripts/mmm-loop/lib/snapshot.ts";
-import { stepReport, stepVisionStatus } from "../scripts/mmm-loop/lib/steps.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import { readSprint } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
+import { stepReport, stepVisionStatus } from "../scripts/mmm-loop/engine/lib/steps.ts";
 import {
-  BUNDLE_DIR,
+  ENGINE_DIR,
   freshTicket,
   gitSubjects,
   invocationText,
@@ -18,7 +18,7 @@ import {
   type TestProject,
 } from "./helpers.ts";
 
-const ctx = (p: TestProject) => ({ root: p.root, bundleDir: BUNDLE_DIR });
+const ctx = (p: TestProject) => ({ root: p.root, bundleDir: ENGINE_DIR });
 
 function seedClosedSprint(p: TestProject, dirName = "01-toy"): void {
   makeSprint(p, {

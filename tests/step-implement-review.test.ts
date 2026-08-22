@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { derivePhase } from "../scripts/mmm-loop/lib/phases.ts";
-import { readSnapshot, readSprint } from "../scripts/mmm-loop/lib/snapshot.ts";
-import { stepImplement, stepReview } from "../scripts/mmm-loop/lib/steps.ts";
-import type { Ticket } from "../scripts/mmm-loop/lib/tickets.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import { derivePhase } from "../scripts/mmm-loop/engine/lib/phases.ts";
+import { readSnapshot, readSprint } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
+import { stepImplement, stepReview } from "../scripts/mmm-loop/engine/lib/steps.ts";
+import type { Ticket } from "../scripts/mmm-loop/engine/lib/tickets.ts";
 import {
-  BUNDLE_DIR,
+  ENGINE_DIR,
   freshTicket,
   gitSubjects,
   invocations,
@@ -22,7 +22,7 @@ import {
   type TestProject,
 } from "./helpers.ts";
 
-const ctx = (p: TestProject) => ({ root: p.root, bundleDir: BUNDLE_DIR });
+const ctx = (p: TestProject) => ({ root: p.root, bundleDir: ENGINE_DIR });
 
 function seedOpenTickets(p: TestProject): void {
   makeSprint(p, {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { TICKET_FILENAME_RE, validateTicket } from "../scripts/mmm-loop/lib/tickets.ts";
+import { TICKET_FILENAME_RE, validateTicket } from "../scripts/mmm-loop/engine/lib/tickets.ts";
 import { freshTicket } from "./helpers.ts";
 
 describe("ticket filename rule", () => {

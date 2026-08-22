@@ -12,8 +12,8 @@ import {
   parseDispositions,
   parseFeedbackStamp,
   summarizeDispositions,
-} from "../scripts/mmm-loop/lib/feedback.ts";
-import { readFeedbackInbox } from "../scripts/mmm-loop/lib/snapshot.ts";
+} from "../scripts/mmm-loop/engine/lib/feedback.ts";
+import { readFeedbackInbox } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
 
 describe("parseFeedbackStamp", () => {
   test("parses all three keys", () => {

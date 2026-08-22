@@ -5,17 +5,17 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseCandidatesStamp } from "../scripts/mmm-loop/lib/cleanup.ts";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { derivePhase } from "../scripts/mmm-loop/lib/phases.ts";
-import { readSnapshot, readSprint } from "../scripts/mmm-loop/lib/snapshot.ts";
+import { parseCandidatesStamp } from "../scripts/mmm-loop/engine/lib/cleanup.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import { derivePhase } from "../scripts/mmm-loop/engine/lib/phases.ts";
+import { readSnapshot, readSprint } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
 import {
   stepCleanupIdentify,
   stepCleanupTickets,
   stepSprintFocus,
-} from "../scripts/mmm-loop/lib/steps.ts";
+} from "../scripts/mmm-loop/engine/lib/steps.ts";
 import {
-  BUNDLE_DIR,
+  ENGINE_DIR,
   gitSubjects,
   invocations,
   invocationText,
@@ -25,7 +25,7 @@ import {
   type TestProject,
 } from "./helpers.ts";
 
-const ctx = (p: TestProject) => ({ root: p.root, bundleDir: BUNDLE_DIR });
+const ctx = (p: TestProject) => ({ root: p.root, bundleDir: ENGINE_DIR });
 
 const STAMP_ALL = "_Candidates: architecture=yes, clean-code=yes, docs=yes_";
 const STAMP_DOCS_ONLY = "_Candidates: architecture=none, clean-code=none, docs=yes_";

@@ -10,7 +10,7 @@ import {
   claudeConfigPath,
   claudeUserProblem,
   loggedInClaudeUserEmail,
-} from "../scripts/mmm-loop/lib/claude-user.ts";
+} from "../scripts/mmm-loop/engine/lib/claude-user.ts";
 
 /** Run `fn` with CLAUDE_CONFIG_DIR set (or removed), restoring afterwards —
  * Bun tests run in-process, so env changes must never leak between cases. */

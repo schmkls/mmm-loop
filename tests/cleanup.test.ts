@@ -8,9 +8,9 @@ import {
   firstMissingCategory,
   isCadenceCleanup,
   parseCandidatesStamp,
-} from "../scripts/mmm-loop/lib/cleanup.ts";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import type { TicketFile } from "../scripts/mmm-loop/lib/snapshot.ts";
+} from "../scripts/mmm-loop/engine/lib/cleanup.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import type { TicketFile } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
 import { freshTicket } from "./helpers.ts";
 
 function tf(filename: string): TicketFile {

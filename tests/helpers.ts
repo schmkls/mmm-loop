@@ -11,12 +11,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/lib/phases.ts";
-import { init } from "../scripts/mmm-loop/lib/scaffold.ts";
-import type { Ticket } from "../scripts/mmm-loop/lib/tickets.ts";
+import { UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/engine/lib/phases.ts";
+import { init } from "../scripts/mmm-loop/engine/lib/scaffold.ts";
+import type { Ticket } from "../scripts/mmm-loop/engine/lib/tickets.ts";
 
 export const REPO_ROOT = resolve(import.meta.dir, "..");
 export const BUNDLE_DIR = join(REPO_ROOT, "scripts", "mmm-loop");
+/** What step ctx.bundleDir wants: the engine, where the shipped prompts live. */
+export const ENGINE_DIR = join(BUNDLE_DIR, "engine");
 export const LOOP_TS = join(BUNDLE_DIR, "loop.ts");
 export const FAKE_CLAUDE = join(REPO_ROOT, "tests", "fixtures", "fake-claude.ts");
 const SCENARIOS_SRC = join(REPO_ROOT, "tests", "fixtures", "scenarios");

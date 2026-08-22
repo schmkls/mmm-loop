@@ -2,8 +2,8 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAgentStep } from "../scripts/mmm-loop/lib/agent.ts";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
+import { runAgentStep } from "../scripts/mmm-loop/engine/lib/agent.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
 
 const SPAWN_FAKE = join(import.meta.dir, "fixtures", "spawn-fake.ts");
 const ENV_KEYS = [

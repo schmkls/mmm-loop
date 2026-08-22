@@ -3,14 +3,14 @@
  * id, a ✓ line per step, and — being non-TTY — zero ANSI escape bytes. */
 
 import { describe, expect, test } from "bun:test";
-import { STEP_CONFIG, type StepId } from "../scripts/mmm-loop/config.ts";
+import { STEP_CONFIG, type StepId } from "../scripts/mmm-loop/engine/defaults.ts";
 import {
   formatDuration,
   formatStepBanner,
   formatStepDone,
   STEP_EMOJI,
   style,
-} from "../scripts/mmm-loop/lib/console.ts";
+} from "../scripts/mmm-loop/engine/lib/console.ts";
 import { makeProject, runLoop } from "./helpers.ts";
 
 const ESC = "\u001b";

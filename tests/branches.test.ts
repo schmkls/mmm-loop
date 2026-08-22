@@ -6,7 +6,7 @@ import {
   preflightAction,
   SPRINT_BRANCH_RE,
   sprintBranch,
-} from "../scripts/mmm-loop/lib/branches.ts";
+} from "../scripts/mmm-loop/engine/lib/branches.ts";
 
 describe("SPRINT_BRANCH_RE", () => {
   test("accepts exactly sprint/NN", () => {

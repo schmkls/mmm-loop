@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { UX_TICKETIZED_NO } from "../scripts/mmm-loop/lib/phases.ts";
+import { UX_TICKETIZED_NO } from "../scripts/mmm-loop/engine/lib/phases.ts";
 import {
   checkCandidatesStamp,
   checkCleanupTickets,
@@ -21,8 +21,8 @@ import {
   checkVisionStatus,
   parseTicket,
   type FilesDelta,
-} from "../scripts/mmm-loop/lib/postconditions.ts";
-import type { Ticket } from "../scripts/mmm-loop/lib/tickets.ts";
+} from "../scripts/mmm-loop/engine/lib/postconditions.ts";
+import type { Ticket } from "../scripts/mmm-loop/engine/lib/tickets.ts";
 import { freshTicket } from "./helpers.ts";
 
 const files = (entries: Record<string, Ticket | string>): Map<string, string> =>

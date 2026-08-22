@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { readSprint } from "../scripts/mmm-loop/lib/snapshot.ts";
-import { stepSpec, stepSprintFocus, stepTickets } from "../scripts/mmm-loop/lib/steps.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import { readSprint } from "../scripts/mmm-loop/engine/lib/snapshot.ts";
+import { stepSpec, stepSprintFocus, stepTickets } from "../scripts/mmm-loop/engine/lib/steps.ts";
 import {
-  BUNDLE_DIR,
+  ENGINE_DIR,
   gitSubjects,
   invocations,
   invocationText,
@@ -17,7 +17,7 @@ import {
   type TestProject,
 } from "./helpers.ts";
 
-const ctx = (p: TestProject) => ({ root: p.root, bundleDir: BUNDLE_DIR });
+const ctx = (p: TestProject) => ({ root: p.root, bundleDir: ENGINE_DIR });
 
 describe("step 2 — sprint focus", () => {
   test("happy path: folder + focus created, name validated, committed", async () => {

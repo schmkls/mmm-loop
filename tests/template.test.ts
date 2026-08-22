@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fillTemplate } from "../scripts/mmm-loop/lib/template.ts";
+import { fillTemplate } from "../scripts/mmm-loop/engine/lib/template.ts";
 
 describe("fillTemplate", () => {
   test("substitutes variables, including repeats", () => {

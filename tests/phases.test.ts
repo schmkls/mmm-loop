@@ -3,15 +3,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LoopError } from "../scripts/mmm-loop/lib/errors.ts";
-import { derivePhase, UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/lib/phases.ts";
+import { LoopError } from "../scripts/mmm-loop/engine/lib/errors.ts";
+import { derivePhase, UX_TICKETIZED_NO, UX_TICKETIZED_YES } from "../scripts/mmm-loop/engine/lib/phases.ts";
 import {
   readSnapshot,
   type ProjectSnapshot,
   type SprintSnapshot,
   type TicketFile,
-} from "../scripts/mmm-loop/lib/snapshot.ts";
-import type { Ticket } from "../scripts/mmm-loop/lib/tickets.ts";
+} from "../scripts/mmm-loop/engine/lib/snapshot.ts";
+import type { Ticket } from "../scripts/mmm-loop/engine/lib/tickets.ts";
 import { freshTicket } from "./helpers.ts";
 
 /** Ticket file for in-memory snapshots; id derived from the filename. */

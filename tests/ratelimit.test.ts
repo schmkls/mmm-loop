@@ -1,12 +1,12 @@
 /** Pure rate-limit classification and wait computation (spec §6.3). */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { RATE_LIMIT } from "../scripts/mmm-loop/config.ts";
+import { RATE_LIMIT } from "../scripts/mmm-loop/engine/defaults.ts";
 import {
   computeWaitMs,
   detectRateLimit,
   effectiveRateLimitConfig,
-} from "../scripts/mmm-loop/lib/ratelimit.ts";
+} from "../scripts/mmm-loop/engine/lib/ratelimit.ts";
 
 // A fixed "now" so epoch plausibility is deterministic: 2026-08-14T06:00:00Z.
 const NOW = Date.UTC(2026, 7, 14, 6, 0, 0);
