@@ -64,7 +64,7 @@ scripts/mmm-loop/
     loop.ts         # entry point: init | run | version | update | install
     defaults.ts     # the stock config: STEP_CONFIG, CLEANUP_CADENCE, ...
     config.ts       # merges ../config.ts over defaults.ts and re-exports
-    VERSION         # the engine's version string, e.g. "v0.1.0 (2026-08-22, abc1234)"
+    VERSION         # the engine's version string, e.g. "v0.1.0 (2026-08-22)"
     lib/            # orchestrator internals (phase derivation, spawn wrapper, ...)
     prompts/        # the thirteen shipped step prompts (§8)
       02-sprint-focus.md      02-feedback-focus.md
@@ -147,7 +147,7 @@ run without much ceremony:
 drifted?" in one line — the engine version plus the size of the two overlays:
 
 ```
-v0.1.0 (2026-08-22, abc1234) (engine) · 1 prompt override · 2 config overrides
+v0.1.0 (2026-08-22) (engine) · 1 prompt override · 2 config overrides
 ```
 
 ### 3.3 The state contract
@@ -202,9 +202,11 @@ the source and prints the notes for the exact span it is jumping, so upgrade
 notes are written for the person running the update.
 
 The engine's version string lives in `scripts/mmm-loop/engine/VERSION` as
-`vX.Y.Z (YYYY-MM-DD, <sha>)`, stamped in the release commit that the tag
-points at. It is read by `version`, by `install`, and by both ends of
-`update`; a missing or empty file reads as `(unknown)` and is never an error.
+`vX.Y.Z (YYYY-MM-DD)`, stamped in the release commit that the tag points at.
+It deliberately carries no commit sha: the file is part of the release commit,
+so it cannot contain that commit's own sha — the tag is the source of truth
+(`git rev-list -n1 vX.Y.Z`). It is read by `version`, by `install`, and by
+both ends of `update`; a missing or empty file reads as `(unknown)` and is never an error.
 There is no run-time version floor — a project's engine is whatever its
 `engine/` directory contains, and the update-time notes are the only
 coupling.
