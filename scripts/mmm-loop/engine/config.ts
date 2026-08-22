@@ -57,6 +57,11 @@ function mergeConfig(defaults: LoopConfig, patch: Partial<LoopConfig>): LoopConf
   return merged;
 }
 
+/** The top-level keys this project actually sets — how far the overlay has
+ * drifted from stock, which is what `version` reports. Unknown keys count:
+ * they are drift too, even though the merge ignores them. */
+export const OVERLAY_KEYS: string[] = Object.keys(overlay);
+
 const CONFIG = mergeConfig(DEFAULTS, overlay);
 
 export const STEP_CONFIG = CONFIG.STEP_CONFIG;

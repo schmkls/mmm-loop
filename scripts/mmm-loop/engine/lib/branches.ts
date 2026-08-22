@@ -13,6 +13,12 @@ export function sprintBranch(sprintNumber: string): string {
   return `sprint/${sprintNumber}`;
 }
 
+/** The sprint branches among `branches` — "is a sprint in flight?", asked by
+ * the startup preflight and by `update`, which refuses while one exists. */
+export function sprintBranches(branches: string[]): string[] {
+  return branches.filter((b) => SPRINT_BRANCH_RE.test(b));
+}
+
 export type PreflightAction =
   | { kind: "proceed" }
   | { kind: "checkout"; branch: string }
@@ -31,17 +37,17 @@ export function preflightAction(
   branches: string[],
   base: string,
 ): PreflightAction {
-  const sprintBranches = branches.filter((b) => SPRINT_BRANCH_RE.test(b));
-  if (sprintBranches.length > 1) {
+  const sprints = sprintBranches(branches);
+  if (sprints.length > 1) {
     return {
       kind: "error",
       message:
         `Branch invariant broken: more than one sprint branch exists ` +
-        `(${sprintBranches.join(", ")}); at most one may exist at a time. ` +
+        `(${sprints.join(", ")}); at most one may exist at a time. ` +
         `Merge or delete all but one and rerun.`,
     };
   }
-  const only = sprintBranches[0];
+  const only = sprints[0];
   if (only !== undefined) {
     return only === current ? { kind: "proceed" } : { kind: "checkout", branch: only };
   }

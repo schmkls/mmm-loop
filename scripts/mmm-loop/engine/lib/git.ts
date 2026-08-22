@@ -53,6 +53,24 @@ export async function gitCurrentBranch(cwd: string): Promise<string> {
   return (await git(cwd, "rev-parse", "--abbrev-ref", "HEAD")).trim();
 }
 
+/** True when `cwd` is inside a git work tree. `update` needs this before it
+ * can promise a reviewable, undoable change. */
+export async function gitIsRepo(cwd: string): Promise<boolean> {
+  const proc = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return (await proc.exited) === 0;
+}
+
+/** `git status --porcelain` lines limited to one pathspec — staged,
+ * unstaged, and untracked alike. Empty = nothing to lose under that path. */
+export async function gitStatusPorcelain(cwd: string, pathspec: string): Promise<string[]> {
+  const out = await git(cwd, "status", "--porcelain", "--", pathspec);
+  return out.split("\n").filter((l) => l.trim() !== "");
+}
+
 /** All local branch names (short form, e.g. "main", "sprint/01"). */
 export async function gitLocalBranches(cwd: string): Promise<string[]> {
   const out = await git(cwd, "for-each-ref", "refs/heads", "--format=%(refname:short)");

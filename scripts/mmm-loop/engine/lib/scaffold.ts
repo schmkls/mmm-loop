@@ -101,6 +101,14 @@ const SCAFFOLD: Record<string, string> = {
   "docs/feedback/handled/.gitkeep": "",
 };
 
+/**
+ * Every path `init` would create. Read by `update` — of the *new* engine, so
+ * a version that adds a scaffold file announces it on its own — to print
+ * "new scaffold files available — run `init`". Keep it exported: dropping it
+ * silently costs future updates that hint.
+ */
+export const SCAFFOLD_FILES: string[] = Object.keys(SCAFFOLD);
+
 export function init(root: string): void {
   for (const [rel, content] of Object.entries(SCAFFOLD)) {
     const path = join(root, rel);
